@@ -1,0 +1,1 @@
+Gotham Agent Rush C1 Competition MVP, built from local tested Gotham v2.2 code; packaged on 2026-11-08. No private credentials included.

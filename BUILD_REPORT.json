@@ -1,0 +1,34 @@
+{
+  "release": "Gotham Project 2.1 \u2014 laptop-safe local inference",
+  "architecture": "Batman (human) -> Alfred (captain) -> 5 agents; separate independent Specter",
+  "mode": "$0 by default (no cloud calls)",
+  "code_change": "Built on audited v1.3 source; additional general objective engine, pluggable local inference, separate Batman auth, optional Specter AI triage, safer sandbox cleanup, refreshed UI, Windows/Linux launchers; v2.1 single-request Ollama local inference gate, reject cloud aliases, installed-model preflight, Windows hardware inventory, refreshed local launch",
+  "verification": {
+    "unit_tests_passed": 36,
+    "real_docker_tests_deselected": 2,
+    "http_smoke_test": "PASSED local FastAPI routes /, /health, /api/agents, /api/sample, /api/objectives, Batman audit auth",
+    "browser_js_syntax": "passed via Node.js v22",
+    "shell_syntax": "passed via bash -n",
+    "real_ollama_inference": "NOT PERFORMED \u2014 no Ollama model in this build environment; provided a local user-run proof script",
+    "live_docker_execution": "NOT PERFORMED: docker unavailable",
+    "live_vultr_deployment": "NOT PERFORMED: credits unverified",
+    "genuine_seven_independent_ai_agents": "NOT YET PROVEN",
+    "windows_launch": "UNTESTED on real Windows; script review only",
+    "proof_cli_without_model": "Fails closed without making paid cloud calls"
+  },
+  "financial": {
+    "new_spend_usd": 0,
+    "paid_inference_default": "disabled",
+    "cloud_deployment": "none"
+  },
+  "known_blockers": [
+    "Vultr promo credit not active",
+    "No verified live VM or domain",
+    "No real local Ollama run",
+    "No real Docker integration run in this container",
+    "GitHub public project and hackathon submission not published"
+  ],
+  "release_integrity": "Source-only; no private keys, code caches or original confidential portfolio files included",
+  "version": "2.2-laptop-proof",
+  "release_notes": "Native local Ollama API memory controls; Windows double-click launcher; first genuine local-agent proof script; no new cloud dependencies."
+}
