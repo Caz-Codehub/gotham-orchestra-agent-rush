@@ -1,0 +1,16 @@
+# Private data and runtime artifacts
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.sqlite*
+*.db
+logs/
+artifacts/
+receipts/private/
