@@ -11,7 +11,7 @@ plus **Specter**, an independent append-only audit journal. Owner: GitHub accoun
 The Gotham **4.0** work is in `gotham/core/`. The older 2.x/3.x demo code (`gotham/app.py` legacy routes, `orchestras.py`, `specter.py`, …) is preserved but not extended.
 
 ## 2. Where everything is
-- Branch: `claude/gotham-4-0-execution-8f66gu` (head `ee17d9a` at hand-off). Draft PR **#3** into `main`: https://github.com/Caz-Codehub/gotham-orchestra-agent-rush/pull/3 . PR #1 (Clocked gateway, draft) untouched; PR #2 (quality gates) was incorporated.
+- Branch: `claude/gotham-4-0-execution-8f66gu` (head = the tip of `gotham-4.0.bundle`). Draft PR **#3** into `main`: https://github.com/Caz-Codehub/gotham-orchestra-agent-rush/pull/3 . PR #1 (Clocked gateway, draft) untouched; PR #2 (quality gates) was incorporated.
 - This package: `gotham-4.0-source/` (exact tree at HEAD), `gotham-4.0.bundle` (full git history; `git clone gotham-4.0.bundle gotham` then `git checkout claude/gotham-4-0-execution-8f66gu`), `MANIFEST.sha256`.
 
 ## 3. State of truth (verified, not aspirational)
