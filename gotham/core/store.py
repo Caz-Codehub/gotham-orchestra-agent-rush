@@ -56,7 +56,32 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._seq_lock = threading.Lock()
         with self._conn() as c:
+            self._migrate(c)
+
+    @staticmethod
+    def _migrate(c):
+        """Versioned, additive migrations. Newer-than-known schemas are tolerated (rollback safety) but logged by version."""
+        ver = c.execute('PRAGMA user_version').fetchone()[0]
+        if ver < 1:
             c.executescript(SCHEMA)
+            c.execute('PRAGMA user_version=1')
+        # future: if ver < 2: c.executescript(MIGRATION_2); c.execute('PRAGMA user_version=2')
+
+    def schema_version(self) -> int:
+        with self._conn() as c:
+            return c.execute('PRAGMA user_version').fetchone()[0]
+
+    def begin_finalize(self, mid) -> bool:
+        """Compare-and-swap so exactly one caller finalizes a mission even under concurrent advance()."""
+        with self._conn() as c:
+            cur = c.execute("UPDATE missions SET status='finalizing', updated=? WHERE id=? AND status IN ('planning','running','awaiting_approval')",
+                            (time.time(), mid))
+            return cur.rowcount == 1
+
+    def reset_stale_finalizing(self, older_than_s=60) -> int:
+        with self._conn() as c:
+            cur = c.execute("UPDATE missions SET status='running' WHERE status='finalizing' AND updated < ?", (time.time() - older_than_s,))
+            return cur.rowcount
 
     @contextmanager
     def _conn(self):
@@ -237,7 +262,7 @@ class Store:
 
     def open_missions(self):
         with self._conn() as c:
-            return [r['id'] for r in c.execute("SELECT id FROM missions WHERE status IN ('planning','running','awaiting_approval')")]
+            return [r['id'] for r in c.execute("SELECT id FROM missions WHERE status IN ('planning','running','awaiting_approval','finalizing')")]
 
     # ---- artifacts / approvals / usage / messages -------------------------
     def add_artifact(self, mission_id, task_id, name, path, sha256, size, producer) -> str:

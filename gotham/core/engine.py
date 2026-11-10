@@ -138,6 +138,10 @@ class Alfred:
 
         def beat():
             while not stop.wait(config.LEASE_SECONDS / 3):
+                if time.monotonic() > ctx.deadline + config.HEARTBEAT_GRACE_S:
+                    # Task blew through its own deadline (hung thread): stop renewing so recovery can reclaim it.
+                    self.audit.record(mid, tid, 'Alfred', 'heartbeat_stopped_deadline_exceeded', {})
+                    return
                 self.store.heartbeat(tid, worker_id, config.LEASE_SECONDS)
         hb = threading.Thread(target=beat, daemon=True)
         hb.start()
@@ -220,21 +224,35 @@ class Alfred:
             orphans = sbx.remove_task_containers(r['task_id'])
             self.audit.record(r['mission_id'], r['task_id'], 'Alfred', 'recovery_' + r['action'],
                               {'reason': 'worker lease expired', 'orphan_containers_removed': len(orphans)})
+        stale = self.store.reset_stale_finalizing()
+        if stale:
+            self.audit.record(None, None, 'Alfred', 'recovery_finalizing_reset', {'missions': stale})
         for mid in self.store.open_missions():
             self.advance(mid)
         return rec
 
+    def cancel(self, mid: str, by: str) -> None:
+        """Cancel a mission: pending tasks cancelled now; RUNNING tasks lose their containers immediately and stop at the next tool call."""
+        self.store.cancel_mission(mid)
+        killed = 0
+        for t in self.store.tasks_for(mid):
+            if t['status'] == 'running':
+                killed += len(sbx.remove_task_containers(t['id']))
+        self.audit.record(mid, None, 'Batman', 'cancel_requested', {'by': by, 'containers_killed': killed})
+        self.advance(mid)
+
     def advance(self, mid: str) -> None:
         self.store.block_dependents()
         m = self.store.get_mission(mid)
-        if not m or m['status'] in ('verified', 'failed', 'cancelled', 'completed_unverified'):
+        if not m or m['status'] in ('verified', 'failed', 'cancelled', 'completed_unverified', 'finalizing'):
             return
         tasks = self.store.tasks_for(mid)
         if not tasks:
             return
         if m['cancel_requested'] and all(t['status'] in TERMINAL for t in tasks):
-            self.store.set_mission(mid, status='cancelled')
-            self.audit.record(mid, None, 'Alfred', 'mission_cancelled', {})
+            if self.store.begin_finalize(mid):
+                self.store.set_mission(mid, status='cancelled')
+                self.audit.record(mid, None, 'Alfred', 'mission_cancelled', {})
             return
         if any(t['status'] == 'awaiting_approval' for t in tasks) and m['status'] != 'awaiting_approval':
             self.store.set_mission(mid, status='awaiting_approval')
@@ -245,8 +263,17 @@ class Alfred:
 
     def finalize(self, mid: str) -> dict:
         m = self.store.get_mission(mid)
-        if m['status'] in ('verified', 'failed', 'cancelled', 'completed_unverified'):
+        if m['status'] in ('verified', 'failed', 'cancelled', 'completed_unverified', 'finalizing'):
             return m['result'] or {}
+        if not self.store.begin_finalize(mid):      # another worker won the race
+            return {}
+        try:
+            return self._finalize_locked(mid, m)
+        except Exception:
+            self.store.set_mission(mid, status='running')   # never leave a mission wedged in 'finalizing'
+            raise
+
+    def _finalize_locked(self, mid, m):
         tasks = self.store.tasks_for(mid)
         checks = verify_tasks(tasks)
         all_ok = bool(checks) and all(c['pass'] for c in checks)

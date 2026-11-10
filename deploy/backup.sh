@@ -2,12 +2,13 @@
 # Consistent online backup of the mission store, audit journal (+key) and artifacts. Usage: backup.sh DATA_DIR AUDIT_DIR OUT_DIR
 set -euo pipefail
 DATA=${1:?data dir}; AUDIT=${2:?audit dir}; OUT=${3:?output dir}; KEEP=${GOTHAM_BACKUP_KEEP:-7}
+[ -f "$DATA/gotham.sqlite3" ] || { echo "nothing to back up (no store yet)"; exit 0; }
 TS=$(date -u +%Y%m%dT%H%M%SZ); TMP=$(mktemp -d); mkdir -p "$OUT"
 python3 - "$DATA/gotham.sqlite3" "$TMP/gotham.sqlite3" <<'PY'
 import sqlite3,sys
 s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()
 PY
-python3 - "$AUDIT/specter.sqlite3" "$TMP/specter.sqlite3" <<'PY'
+[ -f "$AUDIT/specter.sqlite3" ] && python3 - "$AUDIT/specter.sqlite3" "$TMP/specter.sqlite3" <<'PY'
 import sqlite3,sys
 s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()
 PY

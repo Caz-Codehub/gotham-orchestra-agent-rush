@@ -51,6 +51,17 @@ async def lifespan(application):
 
 app=FastAPI(title='Gotham 4.0 Command Center',version='4.0.0-dev',lifespan=lifespan)
 app.include_router(v4_router)
+MAX_BODY=int(os.environ.get('GOTHAM_MAX_BODY_BYTES','1000000'))
+
+@app.middleware('http')
+async def limit_body(request:Request,call_next):
+    # Reject oversized API bodies up-front (a reverse proxy should enforce the same limit).
+    if request.url.path.startswith('/api/'):
+        cl=request.headers.get('content-length')
+        if cl and cl.isdigit() and int(cl)>MAX_BODY:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({'detail':f'request body exceeds {MAX_BODY} bytes'},status_code=413)
+    return await call_next(request)
 lock=Lock()
 
 class Objective(BaseModel):

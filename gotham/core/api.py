@@ -120,9 +120,7 @@ def cancel(mid: str, p=Depends(auth.require('missions:cancel'))):
     a = alfred()
     if not a.store.get_mission(mid):
         raise HTTPException(404, 'mission not found')
-    a.store.cancel_mission(mid)
-    a.audit.record(mid, None, 'Batman', 'cancel_requested', {'by': f'{p.role}:{p.name}'})
-    a.advance(mid)
+    a.cancel(mid, f'{p.role}:{p.name}')
     return _mission_view(mid)
 
 
