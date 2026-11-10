@@ -17,6 +17,13 @@ probe that runs the real code; (3) fix what the probe proves broken; (4) keep th
 | FM-09 | `docker build` could not verify the TLS-inspecting proxy; my `\|\| true` hid the failed `pip install` and produced an image without pytest | incident | silent broken image | build verifies imports (`python -c "import pytest"`), CA injected via optional `ca.crt` | `test_sandbox_*` use the image; build fails loudly |
 | FM-10 | Docker daemon died between steps (ephemeral container) | incident | every sandbox task failed | tools fail **closed** (no host execution), bounded retry, clear error; CLAUDE.md says how to restart | `test_docker_down_fails_closed_without_host_execution` |
 
+| FM-14 | `AuditWriter.__init__` chmod 0700'd a pre-existing shared audit dir; the root-owned host worker locked the uid-10001 container API out of the journal/key (HTTP 500 on `/audit/verify`, `/infra`) | incident (found by running the container + host-worker split) | audit unreadable to the API | only restrict directories we create; `preflight` checks (ownership/permissions with actionable text), `/api/v4/preflight`, worker **exits 3** on failed preflight, `/infra` degrades per-component | `test_audit_dir_permissions_are_not_clobbered…`, `test_worker_refuses_to_start…`, `test_preflight_endpoint_and_infra_degrade_gracefully` |
+| FM-15 | Unreadable `GOTHAM_BUILD_CA_BUNDLE` (`/root/...` as a non-root user) raised `PermissionError` and broke every image build; tests also assumed images already existed | **REAL GitHub Actions failure** (my root-run simulation missed it) | 9 failing tests in `tests.yml` | `ca_bundle_bytes()/usable_ca_path()` swallow `OSError`; `sbx.run` builds managed images on demand; no machine-specific path in conftest | `test_unreadable_ca_bundle_path_is_not_fatal_for_unprivileged_user`, `test_sbx_run_builds_managed_images_on_demand` |
+| FM-16 | Quality-gates workflow dropped the `docker pull python:3.12-alpine` step the legacy tests need | **REAL GitHub Actions failure** | 2 failing legacy tests | step restored in both workflows | CI |
+| FM-17 | `pip-audit` failed on transitive deps (`mcp`, `opentelemetry-api`) of Semgrep; Semgrep hard-pins them so they cannot simply be upgraded | CI simulation | red CI | Semgrep isolated in `.scanners` venv; runtime requirements audit-clean (hard gate); time-boxed documented exceptions | CI `pip_audit_*` steps |
+| FM-18 | Own Semgrep rule flagged 3 f-string SQL statements in `store.py`; `?1` named params mixed with sequences (error in Python 3.14) | CI simulation | red self-scan; future break | static statements + `json_each`, named params | CI `semgrep_selfscan`; suite run with `-W error::DeprecationWarning` |
+| FM-19 | My simulation script was edited while bash was executing it → crash mid-run | incident (own mistake) | steps silently skipped | rule: never edit a running script; always read the final summary line | — |
+
 ## B. Hypotheses probed and found already safe
 | ID | Hypothesis | Result | Test |
 |---|---|---|---|
@@ -41,7 +48,10 @@ probe that runs the real code; (3) fix what the probe proves broken; (4) keep th
 | Data across releases | missions and audit chain intact; pre-deploy backup written + checksummed | PASS |
 | Rollback target also unhealthy | exit code 2 + "restore from backup" message | not simulated |
 
-## D. CI failure modes (simulated by `scripts/ci_local.sh`: clean clone, fresh Python 3.12 venv, same steps as the workflow)
+## D. CI failure modes
+**Lesson from real CI:** simulation is only as faithful as its environment. My first simulation ran as **root** on a machine that has `/root/.ccr/`, so it hid FM-15; the real runner is
+unprivileged. `scripts/ci_local.sh` now supports `CI_RUN_AS=runner`. Real runs on GitHub (run ids 42868196053 / 42868196204) are the ground truth and are checked via the Actions API.
+(simulated by `scripts/ci_local.sh`: clean clone, fresh Python 3.12 venv, same steps as the workflows)
 | Risk | Contingency |
 |---|---|
 | Python 3.12 vs 3.13 differences | CI sim runs 3.12 (the version in the workflow) |

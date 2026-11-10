@@ -1,6 +1,8 @@
 # Gotham 4.0 development ledger
 
-_Last updated: 2026-11-10 (session 1). Branch `claude/gotham-4-0-execution-8f66gu`. Suite: **103 passed / 0 failed / 0 skipped**._
+_Last updated: 2026-11-10 (session 1, hardening pass). Branch `claude/gotham-4-0-execution-8f66gu`. Local suite: **124 tests** (full run on this machine: all pass).
+**Real GitHub Actions on commit `643ee58` FAILED** (quality-gates: 101 passed / 2 legacy-test failures; tests.yml: 9 failures, non-root runner). Causes fixed locally in `16a9099` and
+earlier hardening commits — **not yet confirmed green on GitHub until pushed and re-run** (see GOTHAM_FAILURE_MODES FM-15/16)._
 
 ## Repository audit (starting point)
 - `main` = Gotham 2.x/3.x demo: single-mission Docker code-repair, static agent labels, in-memory single-lock execution, SQLite ledger of receipts, rule-based Specter journal.
@@ -15,7 +17,10 @@ _Last updated: 2026-11-10 (session 1). Branch `claude/gotham-4-0-execution-8f66g
 | `8fd0e57` | PR #2 CI quality gates |
 | `9729271` | core: store, audit, auth, tools, sandbox, security + research + lab tools, Alfred, worker, 32 tests |
 | `7368dac` | API v4, Command Center UI, agent runtime, deploy assets, docs, CLAUDE.md |
-| (this) | fuzzing tool, strict five-agent acceptance, research image fixes, acceptance + status docs |
+| `643ee58` | fuzzing tool, strict five-agent acceptance, research image fixes, acceptance + status docs |
+| `0ac65ac` | failure-mode fixes (finalize race, cancel, hung lease, body limit, schema version), resilience tests, CD simulation |
+| `c01f9e3` | audit-dir clobber fix, preflight, sandbox output/disk limits, scanner isolation, SQL hardening, container verification |
+| `16a9099` | fixes for failures found by real CI; non-root CI simulation |
 
 ## Environment facts
 Ephemeral container; Docker daemon started with `nohup dockerd &`; Docker-build TLS needs `GOTHAM_BUILD_CA_BUNDLE`; research image build ≈ 10 min over the proxy (922 MB);

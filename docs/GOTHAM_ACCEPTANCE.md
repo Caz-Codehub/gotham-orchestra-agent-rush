@@ -2,7 +2,8 @@
 
 Legend: **PASS** executed for real and asserted · **FAIL** · **BLOCKED** needs an owner action (see GOTHAM_BLOCKERS.md) · **NOT TESTED**.
 Environment of record: Claude cloud container (Linux, 4 vCPU, 16 GB, no GPU), Docker 29.9 daemon started in-session, Python 3.13, 2026-11-10.
-Reproduce: `GOTHAM_RUN_DOCKER_TESTS=1 python -m pytest -q -ra` → **103 passed, 0 skipped (≈50 s)**. No mocked tools; one scripted-model suite is labelled below.
+Reproduce: `GOTHAM_RUN_DOCKER_TESTS=1 python -m pytest -q -ra` → **124 tests (≈90 s)**; on 2026-11-10 a clean-clone Python 3.12 run reported 122 passed + 2 skipped-by-environment (see FAILURE_MODES FM-14 note).
+**Real GitHub Actions status: FAILED on `643ee58`, fixes pending a re-run** — do not treat this document as CI-green evidence until the Actions run is green. No mocked tools; one scripted-model suite is labelled below.
 
 | # | Acceptance item | Result | Evidence (test) |
 |---|---|---|---|
@@ -29,6 +30,9 @@ Reproduce: `GOTHAM_RUN_DOCKER_TESTS=1 python -m pytest -q -ra` → **103 passed,
 | 11 | **Command Center**: chat, mission submit/history/detail, agents, engineering/research/cyber/lab workspaces, approvals, artifacts (hash-verified preview/download), audit, budget, infra, recovery, error log; desktop + 390 px mobile, no horizontal scroll, no JS errors | **PASS** (manual Playwright run; not yet an automated test) | session log: cyber audit → verified in UI, approval cards shown, audit chain VALID (39 entries), operator denied audit |
 | 12 | **Deployment (local staging)**: health, unauthenticated rejected, operator cannot read audit, worker executes mission, artifact retrieval with integrity check, audit valid, 404 handling | **PASS** 7/7 | `deploy/smoke_test.sh` against local API+worker |
 | 12b | **Deployment (Vultr production)**, systemd units, `deploy.sh` rollback on a real host, backups on schedule | **BLOCKED (B1)** | scripts written, `bash -n` only; backup/restore executed locally (PASS) |
+| 12c | **CD simulation** (`scripts/cd_simulate.sh`): good release, non-compiling release refused, import-crash release auto-rolled-back, smoke-gated release, data + audit chain survive, pre-deploy backup | **PASS** 17/17 (local stand-in; not the Vultr host) | |
+| 12d | **Container deployment**: hardened API image (non-root, read-only root, no caps) + host worker sharing bind mounts runs a mission to `verified`; audit chain valid; preflight endpoint | **PASS** (local Docker) | |
+| 12e | **Resilience suite**: 23 failure-injection tests (concurrent finalize, cancel-running, hung lease, double-worker, long task vs lease, SIGTERM, docker-down, audit-down, oversized body/output/disk, mixed-uid, schema reopen) | **PASS** | `tests/test_v4_resilience.py` |
 | 13 | Vultr credit verification (~$198) / dev-platform credits (~28k) | **BLOCKED (B1)** | |
 | 14 | Git push / PR creation by Forge | **NOT IMPLEMENTED (B7)** | |
 
