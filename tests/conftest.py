@@ -1,6 +1,14 @@
 import os
 import sqlite3
+import tempfile
+
 import pytest
+
+# Hermetic by default: the legacy app/Specter modules read these at import time. Without this, tests share root-owned
+# files under /tmp across users and runs (found by running the suite as an unprivileged user after a root run).
+_SESSION_TMP = tempfile.mkdtemp(prefix='gotham-tests-')
+for _var, _name in (('GOTHAM_SPECTER_DB', 'legacy-specter.sqlite3'), ('GOTHAM_LEDGER_PATH', 'legacy-ledger.sqlite3')):
+    os.environ[_var] = os.path.join(_SESSION_TMP, _name)
 
 from gotham.core import sbx
 
