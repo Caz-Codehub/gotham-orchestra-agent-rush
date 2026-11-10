@@ -1,0 +1,25 @@
+# API + Specter volume separation. The WORKER needs a Docker daemon to create sandboxes, so run it on the host
+# via deploy/gotham-worker.service (recommended) rather than mounting docker.sock into a container.
+services:
+  api:
+    build: ..
+    image: gotham-api:${GOTHAM_TAG:-dev}
+    restart: unless-stopped
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      GOTHAM_BATMAN_TOKEN: ${GOTHAM_BATMAN_TOKEN:?set a unique strong secret}
+      GOTHAM_OPERATOR_TOKEN: ${GOTHAM_OPERATOR_TOKEN:?set a unique strong secret}
+      GOTHAM_VIEWER_TOKEN: ${GOTHAM_VIEWER_TOKEN:-}
+      GOTHAM_AUDIT_DB: /audit/specter.sqlite3
+      GOTHAM_INFERENCE_PROVIDER: ${GOTHAM_INFERENCE_PROVIDER:-none}
+    volumes:
+      - gotham-data:/data
+      - gotham-audit:/audit      # separate volume: never mounted into sandboxes or workspaces
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+volumes:
+  gotham-data:
+  gotham-audit:

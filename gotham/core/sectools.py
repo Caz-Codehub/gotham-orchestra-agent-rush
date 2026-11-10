@@ -431,3 +431,25 @@ def sandbox_behavior(ctx, path, timeout=15):
     return {**{k: r[k] for k in ('sandbox', 'image', 'network', 'exit_code', 'timed_out', 'container_destroyed', 'elapsed_ms')},
             'stdout': r['stdout'][-2000:], 'event_counts': dict(cats), 'events': events[:100], 'behavior_summary': verdicts,
             'telemetry_complete': bool(m)}
+
+
+# ------------------------------------------------------------------ Sentinel: container image scanning (Trivy)
+@tool('container_scan', 'Scan a LOCAL container image for OS/library vulnerabilities with Trivy. Fails closed if Trivy is unavailable.',
+      {'image': ('str', True, 'local image name, must match gotham-* or python:*')}, ('Sentinel',))
+def container_scan(ctx, image):
+    if not re.fullmatch(r'(gotham-[a-z0-9._-]+|python):[A-Za-z0-9._-]+', image):
+        raise ToolDenied('only local gotham-* / python:* images may be scanned')
+    exe = shutil.which('trivy')
+    if not exe:
+        raise ToolError('trivy is not installed on this worker (BLOCKED: see docs/GOTHAM_BLOCKERS.md B3)')
+    r = subprocess.run([exe, 'image', '--quiet', '--format', 'json', '--scanners', 'vuln', image], capture_output=True, text=True,
+                       timeout=ctx.remaining(600))
+    if r.returncode != 0:
+        raise ToolError('trivy failed: ' + r.stderr[-300:])
+    data = json.loads(r.stdout or '{}')
+    findings = []
+    for res in data.get('Results', []):
+        for v in res.get('Vulnerabilities') or []:
+            findings.append(_finding('image.' + v['VulnerabilityID'], v['Severity'].lower(), res['Target'], 0,
+                                     f"{v['PkgName']} {v['InstalledVersion']}: {v.get('Title', '')}", fixed=v.get('FixedVersion')))
+    return {'engine': 'trivy', 'image': image, 'findings': findings}

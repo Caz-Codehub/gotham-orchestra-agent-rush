@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS approvals(
   requested REAL, decided REAL, decided_by TEXT);
 CREATE TABLE IF NOT EXISTS usage(
   id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT, task_id TEXT, kind TEXT, amount REAL, ts REAL);
+CREATE TABLE IF NOT EXISTS workers(id TEXT PRIMARY KEY, pid INTEGER, started REAL, seen REAL, concurrency INTEGER);
 CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT, task_id TEXT, sender TEXT, recipient TEXT,
   type TEXT, body TEXT, ts REAL);
@@ -332,3 +333,39 @@ class Store:
             d['body'] = _l(d['body'])
             out.append(d)
         return out
+
+    # ---- workers & recovery controls ---------------------------------------
+    def worker_seen(self, wid, pid, concurrency):
+        now = time.time()
+        with self._conn() as c:
+            c.execute('INSERT INTO workers(id,pid,started,seen,concurrency) VALUES(?,?,?,?,?) '
+                      'ON CONFLICT(id) DO UPDATE SET seen=excluded.seen', (wid, pid, now, now, concurrency))
+
+    def live_workers(self, within=30):
+        with self._conn() as c:
+            return [dict(r) for r in c.execute('SELECT * FROM workers WHERE seen > ? ORDER BY seen DESC', (time.time() - within,))]
+
+    def retry_task(self, tid) -> bool:
+        """Operator recovery: re-run a failed task (and un-block its dependents)."""
+        with self._conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            r = c.execute("SELECT mission_id,status FROM tasks WHERE id=?", (tid,)).fetchone()
+            if not r or r['status'] not in ('failed', 'cancelled'):
+                c.execute('COMMIT')
+                return False
+            c.execute("UPDATE tasks SET status='pending', attempts=0, error=NULL, result=NULL, finished=NULL WHERE id=?", (tid,))
+            c.execute("UPDATE tasks SET status='pending', error=NULL, finished=NULL WHERE mission_id=? AND status='blocked'", (r['mission_id'],))
+            c.execute("UPDATE missions SET status='running', cancel_requested=0, result=NULL, updated=? WHERE id=?", (time.time(), r['mission_id']))
+            c.execute('COMMIT')
+        return True
+
+    def counts(self):
+        with self._conn() as c:
+            return {'missions': {r['status']: r['n'] for r in c.execute('SELECT status, COUNT(*) n FROM missions GROUP BY status')},
+                    'tasks': {r['status']: r['n'] for r in c.execute('SELECT status, COUNT(*) n FROM tasks GROUP BY status')}}
+
+    def agent_activity(self):
+        with self._conn() as c:
+            rows = c.execute("SELECT agent, status, COUNT(*) n FROM tasks GROUP BY agent, status").fetchall()
+            cur = c.execute("SELECT agent, title, mission_id, started FROM tasks WHERE status='running'").fetchall()
+        return [dict(r) for r in rows], [dict(r) for r in cur]

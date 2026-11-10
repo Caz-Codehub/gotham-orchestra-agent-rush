@@ -1,0 +1,16 @@
+[Unit]
+Description=Gotham 4.0 worker (executes sandboxed tasks)
+After=docker.service
+Requires=docker.service
+[Service]
+User=gotham
+Group=docker
+WorkingDirectory=/opt/gotham/current
+EnvironmentFile=/etc/gotham/gotham.env
+ExecStart=/opt/gotham/venv/bin/python -m gotham.core.worker
+Restart=always
+RestartSec=3
+KillMode=process
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

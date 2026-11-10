@@ -22,6 +22,7 @@ def run_worker(alfred: Alfred | None = None, *, concurrency: int = 4, stop: thre
     last_gc = 0.0
     alfred.recover()
     while not stop.is_set():
+        alfred.store.worker_seen(wid, os.getpid(), concurrency)
         active = {f for f in active if not f.done()}
         did = False
         if len(active) < concurrency:
