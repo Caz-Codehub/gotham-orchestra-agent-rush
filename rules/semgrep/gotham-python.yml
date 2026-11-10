@@ -1,0 +1,84 @@
+rules:
+  - id: gotham.python.eval-exec
+    languages: [python]
+    severity: ERROR
+    message: Use of eval/exec on potentially untrusted input enables code injection (CWE-95).
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    metadata: {cwe: "CWE-95"}
+  - id: gotham.python.subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess call with shell=True allows command injection (CWE-78).
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: os.system(...)
+    metadata: {cwe: "CWE-78"}
+  - id: gotham.python.sql-string-format
+    languages: [python]
+    severity: ERROR
+    message: SQL built by string formatting/concatenation is injectable (CWE-89). Use parameterised queries.
+    pattern-either:
+      - pattern: $C.execute($Q % ..., ...)
+      - pattern: $C.execute($Q + ..., ...)
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute("...".format(...), ...)
+    metadata: {cwe: "CWE-89"}
+  - id: gotham.python.pickle-load
+    languages: [python]
+    severity: WARNING
+    message: Deserialising untrusted data with pickle can execute code (CWE-502).
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+    metadata: {cwe: "CWE-502"}
+  - id: gotham.python.yaml-unsafe-load
+    languages: [python]
+    severity: WARNING
+    message: yaml.load without SafeLoader can construct arbitrary objects (CWE-502).
+    pattern: yaml.load($X)
+    metadata: {cwe: "CWE-502"}
+  - id: gotham.python.hardcoded-secret
+    languages: [python]
+    severity: ERROR
+    message: Hard-coded credential literal (CWE-798).
+    patterns:
+      - pattern-either:
+          - pattern: $NAME = "..."
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(password|passwd|secret|api_?key|token).*
+      - pattern-not: $NAME = ""
+    metadata: {cwe: "CWE-798"}
+  - id: gotham.python.weak-hash
+    languages: [python]
+    severity: WARNING
+    message: MD5/SHA1 are not collision resistant (CWE-327).
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+    metadata: {cwe: "CWE-327"}
+  - id: gotham.python.path-traversal-open
+    languages: [python]
+    severity: WARNING
+    message: open() on a request-derived path may allow directory traversal (CWE-22).
+    patterns:
+      - pattern: open($P, ...)
+      - pattern-either:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                  ...
+    metadata: {cwe: "CWE-22"}
+  - id: gotham.python.flask-debug
+    languages: [python]
+    severity: ERROR
+    message: Flask debug mode exposes an interactive debugger (CWE-489).
+    pattern: $APP.run(..., debug=True, ...)
+    metadata: {cwe: "CWE-489"}
+  - id: gotham.python.requests-verify-false
+    languages: [python]
+    severity: WARNING
+    message: TLS verification disabled (CWE-295).
+    pattern: requests.$M(..., verify=False, ...)
+    metadata: {cwe: "CWE-295"}
