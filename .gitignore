@@ -18,3 +18,4 @@ data/
 data-audit/
 *.executed.ipynb
 .scanners/
+handoff/
