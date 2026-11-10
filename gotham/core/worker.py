@@ -7,7 +7,9 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, sbx
+import sys
+
+from . import config, preflight, sbx
 from .engine import Alfred
 from ..inference import get_inference_client
 
@@ -44,6 +46,13 @@ def run_worker(alfred: Alfred | None = None, *, concurrency: int = 4, stop: thre
 
 
 if __name__ == '__main__':
+    checks = preflight.run('worker')
+    for c in checks:
+        if c['status'] != 'ok':
+            print(f"[preflight {c['status'].upper()}] {c['name']}: {c['detail']}", file=sys.stderr, flush=True)
+    if preflight.failed(checks):
+        print('Worker refusing to start: fix the failed preflight checks above.', file=sys.stderr, flush=True)
+        sys.exit(3)
     ev = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: ev.set())
     signal.signal(signal.SIGINT, lambda *_: ev.set())

@@ -9,6 +9,7 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
 import time
 import uuid
 from contextvars import ContextVar
@@ -18,8 +19,30 @@ from . import config
 CURRENT_TASK: ContextVar[str] = ContextVar('gotham_current_task', default='')
 
 MAX_OUT = 20000
+WORKSPACE_LIMIT_MB = int(os.environ.get('GOTHAM_WORKSPACE_LIMIT_MB', '256'))
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE_FILES = {'gotham-lab-target:latest': 'docker/lab_target.Dockerfile', 'gotham-sandbox:latest': 'docker/sandbox.Dockerfile', 'gotham-research:latest': 'docker/research.Dockerfile'}
+
+
+def dir_size(path) -> int:
+    total = 0
+    stack = [str(path)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    if e.is_symlink():
+                        continue
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    else:
+                        try:
+                            total += e.stat(follow_symlinks=False).st_size
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+    return total
 
 
 class SandboxError(RuntimeError):
@@ -54,7 +77,12 @@ def ensure_image(image: str) -> None:
         shutil.copy(ROOT / df, ctx / 'Dockerfile')
         ca = os.environ.get('GOTHAM_BUILD_CA_BUNDLE', '')
         (ctx / 'ca.crt').write_bytes(Path(ca).read_bytes() if ca and Path(ca).is_file() else b'')
-        r = subprocess.run(['docker', 'build', '-q', '-t', image, str(ctx)], capture_output=True, text=True, timeout=1500)
+        for attempt in range(1, 4):
+            r = subprocess.run(['docker', 'build', '-q', '-t', image, str(ctx)], capture_output=True, text=True, timeout=1500)
+            transient = re.search(r'(?i)429|toomanyrequests|timeout|timed out|temporary failure|connection (reset|refused)|TLS|EOF|503|502', r.stderr)
+            if r.returncode == 0 or not transient:
+                break
+            time.sleep(5 * attempt)      # registry rate-limit / network blip: back off and retry (max 3 attempts)
     if r.returncode != 0:
         raise SandboxError('Image build failed: ' + r.stderr[-400:])
 
@@ -102,20 +130,58 @@ def run(image: str, cmd: list[str], *, mount: Path | None = None, rw: bool = Fal
     args += [image, *cmd]
     t0 = time.monotonic()
     timed_out = False
+    quota_killed = False
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tails = {'out': bytearray(), 'err': bytearray()}
+    counts = {'out': 0, 'err': 0}
+
+    def drain(stream, key):
+        # Bounded memory: keep only the tail, count the rest. A container printing gigabytes cannot exhaust the worker.
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                return
+            counts[key] += len(chunk)
+            buf = tails[key]
+            buf += chunk
+            if len(buf) > MAX_OUT * 4:
+                del buf[:len(buf) - MAX_OUT * 2]
+
+    threads = [threading.Thread(target=drain, args=(proc.stdout, 'out'), daemon=True),
+               threading.Thread(target=drain, args=(proc.stderr, 'err'), daemon=True)]
+    [t.start() for t in threads]
+    stop_watch = threading.Event()
+
+    def watchdog():
+        # Disk quota for the bind-mounted workspace: sandboxed code must not be able to fill the host disk.
+        nonlocal quota_killed
+        limit = WORKSPACE_LIMIT_MB * 1024 * 1024
+        while not stop_watch.wait(0.5):
+            if dir_size(mount) > limit:
+                quota_killed = True
+                subprocess.run(['docker', 'kill', name], capture_output=True, timeout=15)
+                return
+    if mount is not None and rw:
+        threading.Thread(target=watchdog, daemon=True).start()
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, errors='replace')
-        out, err, code = r.stdout, r.stderr, r.returncode
-    except subprocess.TimeoutExpired as e:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
         timed_out = True
-        out = (e.stdout.decode(errors='replace') if isinstance(e.stdout, bytes) else (e.stdout or ''))
-        err = (e.stderr.decode(errors='replace') if isinstance(e.stderr, bytes) else (e.stderr or ''))
-        code = 124
         subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=15)
+        proc.kill()
+        proc.wait(timeout=10)
+    finally:
+        stop_watch.set()
+    [t.join(timeout=5) for t in threads]
+    out = tails['out'][-MAX_OUT:].decode('utf-8', 'replace')
+    err = tails['err'][-MAX_OUT:].decode('utf-8', 'replace')
+    code = 124 if timed_out else proc.returncode
     destroyed = _destroyed(name)
     if code == 125:
         raise SandboxError('Docker could not start container: ' + (err or out)[:300])
     return {'sandbox': 'docker', 'image': image, 'network': (network if isinstance(network, str) else 'bridge') if network else 'none', 'exit_code': code,
-            'timed_out': timed_out, 'container_destroyed': destroyed, 'stdout': out[-MAX_OUT:], 'stderr': err[-MAX_OUT:],
+            'timed_out': timed_out, 'quota_killed': quota_killed, 'output_bytes': counts['out'] + counts['err'],
+            'container_destroyed': destroyed, 'stdout': out[-MAX_OUT:], 'stderr': err[-MAX_OUT:],
             'elapsed_ms': round((time.monotonic() - t0) * 1000), 'read_only_root': True, 'cap_drop': 'ALL',
             'cmd_sha256': hashlib.sha256(' '.join(cmd).encode()).hexdigest()}
 

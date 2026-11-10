@@ -77,11 +77,13 @@ def _load_key(path: Path) -> bytes:
 class _Journal:
     def __init__(self, path):
         self.path = Path(path)
+        created = not self.path.parent.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(self.path.parent, 0o700)
-        except OSError:
-            pass
+        if created:      # never re-permission a pre-existing (possibly shared, multi-uid) directory
+            try:
+                os.chmod(self.path.parent, 0o700)
+            except OSError:
+                pass
         self._key = _load_key(self.path)
         with self._conn() as c:
             c.executescript(SCHEMA)
@@ -149,8 +151,8 @@ class AuditReader(_Journal):
 
     def events(self, mission_id=None, limit=500, after_seq=0):
         with self._conn() as c:
-            rows = c.execute('SELECT * FROM events WHERE (?1 IS NULL OR mission_id=?1) AND seq>?2 ORDER BY seq LIMIT ?3',
-                             (mission_id, after_seq, limit)).fetchall()
+            rows = c.execute('SELECT * FROM events WHERE (:m IS NULL OR mission_id=:m) AND seq>:a ORDER BY seq LIMIT :l',
+                             {'m': mission_id, 'a': after_seq, 'l': limit}).fetchall()
         return [{**dict(r), 'detail': json.loads(r['detail'])} for r in rows]
 
     def report(self, mission_id) -> dict:

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import auth, config, sbx
+from . import auth, config, preflight, sbx
 from . import tools as T
 from .audit import AuditReader
 from .engine import KINDS, Alfred
@@ -216,13 +216,27 @@ def budget(p=Depends(auth.require('infra:read'))):
             'note': 'Vultr/credit balances are not queried from this process; see docs/GOTHAM_BLOCKERS.md'}
 
 
+def _safe(fn, fallback):
+    """Degrade one component instead of failing the whole status page with a 500."""
+    try:
+        return fn()
+    except Exception as exc:
+        return {**fallback, 'error': f'{type(exc).__name__}: {str(exc)[:160]}'}
+
+
+@router.get('/preflight')
+def preflight_endpoint(p=Depends(auth.require('infra:read'))):
+    checks = preflight.run('api')
+    return {'ok': not preflight.failed(checks), 'checks': checks}
+
+
 @router.get('/infra')
 def infra(p=Depends(auth.require('infra:read'))):
     a = alfred()
     du = shutil.disk_usage(config.data_dir())
     images = {i: sbx.image_present(i) for i in ('gotham-sandbox:latest', config.RESEARCH_IMAGE, 'gotham-lab-target:latest')}
     return {'docker': sbx.docker_available(), 'images': images, 'workers': a.store.live_workers(), 'counts': a.store.counts(),
-            'audit': {k: v for k, v in reader().verify().items() if k != 'reason' or True},
+            'audit': _safe(lambda: reader().verify(), {'valid': False, 'checked': 0, 'error': 'audit journal unreadable (see /api/v4/preflight)'}),
             'disk': {'free_gb': round(du.free / 1e9, 1), 'used_pct': round(du.used / du.total * 100, 1)},
             'auth_roles_configured': auth.configured_roles(), 'cpus': os.cpu_count(),
             'inference': {'provider': getattr(a.client, 'provider_name', 'none'), 'configured': bool(getattr(a.client, 'configured', False))},

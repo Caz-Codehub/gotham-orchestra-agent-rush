@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT, task_id TEXT, sender TEXT, recipient TEXT,
   type TEXT, body TEXT, ts REAL);
 """
+_MISSION_UPDATES = {
+    'status': 'UPDATE missions SET status=? WHERE id=?', 'result': 'UPDATE missions SET result=? WHERE id=?',
+    'updated': 'UPDATE missions SET updated=? WHERE id=?', 'cancel_requested': 'UPDATE missions SET cancel_requested=? WHERE id=?',
+    'params': 'UPDATE missions SET params=? WHERE id=?', 'budget': 'UPDATE missions SET budget=? WHERE id=?',
+}
 TERMINAL = {'succeeded', 'failed', 'cancelled', 'blocked'}
 
 
@@ -128,9 +133,18 @@ class Store:
         if 'result' in fields:
             fields['result'] = _j(fields['result'])
         fields['updated'] = time.time()
-        cols = ','.join(f'{k}=?' for k in fields)
+        unknown = set(fields) - set(_MISSION_UPDATES)
+        if unknown:
+            raise ValueError(f'unknown mission fields: {sorted(unknown)}')
         with self._conn() as c:
-            c.execute(f'UPDATE missions SET {cols} WHERE id=?', (*fields.values(), mid))
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                for k, v in fields.items():
+                    c.execute(_MISSION_UPDATES[k], (v, mid))     # static, pre-written statements only
+                c.execute('COMMIT')
+            except Exception:
+                c.execute('ROLLBACK')
+                raise
 
     # ---- tasks ----------------------------------------------------------
     def add_task(self, mission_id, agent, kind, title, params, depends=(), risk='low', mode='playbook',
@@ -174,9 +188,8 @@ class Store:
                         continue
                     deps = t['depends'] or []
                     if deps:
-                        q = ','.join('?' * len(deps))
-                        done = c.execute(f"SELECT COUNT(*) FROM tasks WHERE id IN ({q}) AND status='succeeded'",
-                                         deps).fetchone()[0]
+                        done = c.execute("SELECT COUNT(*) FROM tasks WHERE id IN (SELECT value FROM json_each(?)) AND status='succeeded'",
+                                         (json.dumps(deps),)).fetchone()[0]
                         if done != len(deps):
                             continue
                     now = time.time()
@@ -236,8 +249,8 @@ class Store:
                 deps = _l(r['depends']) or []
                 if not deps:
                     continue
-                q = ','.join('?' * len(deps))
-                bad = c.execute(f"SELECT COUNT(*) FROM tasks WHERE id IN ({q}) AND status IN ('failed','cancelled','blocked')", deps).fetchone()[0]
+                bad = c.execute("SELECT COUNT(*) FROM tasks WHERE id IN (SELECT value FROM json_each(?)) "
+                                "AND status IN ('failed','cancelled','blocked')", (json.dumps(deps),)).fetchone()[0]
                 if bad:
                     c.execute("UPDATE tasks SET status='blocked', error='dependency did not succeed', finished=? WHERE id=?",
                               (time.time(), r['id']))
@@ -274,8 +287,8 @@ class Store:
 
     def artifacts_for(self, mission_id=None):
         with self._conn() as c:
-            rows = c.execute('SELECT * FROM artifacts WHERE (?1 IS NULL OR mission_id=?1) ORDER BY created DESC',
-                             (mission_id,)).fetchall()
+            rows = c.execute('SELECT * FROM artifacts WHERE (:m IS NULL OR mission_id=:m) ORDER BY created DESC',
+                             {'m': mission_id}).fetchall()
         return [dict(r) for r in rows]
 
     def get_artifact(self, aid):
@@ -318,8 +331,8 @@ class Store:
 
     def approvals(self, status=None, mission_id=None):
         with self._conn() as c:
-            rows = c.execute('SELECT * FROM approvals WHERE (?1 IS NULL OR status=?1) AND (?2 IS NULL OR mission_id=?2) '
-                             'ORDER BY requested DESC', (status, mission_id)).fetchall()
+            rows = c.execute('SELECT * FROM approvals WHERE (:s IS NULL OR status=:s) AND (:m IS NULL OR mission_id=:m) '
+                             'ORDER BY requested DESC', {'s': status, 'm': mission_id}).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -340,8 +353,8 @@ class Store:
 
     def usage_totals(self, mission_id=None):
         with self._conn() as c:
-            rows = c.execute('SELECT kind, SUM(amount) a, COUNT(*) n FROM usage WHERE (?1 IS NULL OR mission_id=?1) GROUP BY kind',
-                             (mission_id,)).fetchall()
+            rows = c.execute('SELECT kind, SUM(amount) a, COUNT(*) n FROM usage WHERE (:m IS NULL OR mission_id=:m) GROUP BY kind',
+                             {'m': mission_id}).fetchall()
         return {r['kind']: {'total': r['a'], 'events': r['n']} for r in rows}
 
     def add_message(self, mission_id, task_id, sender, recipient, mtype, body):

@@ -227,3 +227,117 @@ def test_schema_version_is_set_and_reopen_is_idempotent(env):
     m = s1.create_mission('k', 'goal goal', {}, 'x')
     s2 = Store(config.store_path())                                  # restart: no data loss, no re-migration errors
     assert s2.get_mission(m) is not None and s2.schema_version() == 1
+
+
+# FM-06 sandbox resource exhaustion (host protection)
+@needs_docker
+def test_output_flood_is_bounded_and_does_not_exhaust_worker_memory(env):
+    import resource
+    code = 'import sys\nfor _ in range(400):\n    sys.stdout.write("x" * 1000000)\n'
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    r = sbx.run('gotham-sandbox:latest', ['python', '-c', code], timeout=60)
+    grown_mb = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) / 1024
+    assert r['output_bytes'] >= 400_000_000 and len(r['stdout']) <= sbx.MAX_OUT and r['container_destroyed']
+    assert grown_mb < 150                                            # 400 MB of output did not land in worker memory
+
+
+@needs_docker
+def test_workspace_disk_quota_kills_runaway_writer(env, monkeypatch):
+    monkeypatch.setattr(sbx, 'WORKSPACE_LIMIT_MB', 20)
+    ws = env / 'ws'
+    ws.mkdir()
+    code = 'import time\nf = open("/work/fill.bin", "wb")\nwhile True:\n    f.write(b"0" * 1000000); f.flush(); time.sleep(0.01)\n'
+    r = sbx.run('gotham-sandbox:latest', ['python', '-c', code], mount=ws, rw=True, timeout=60)
+    assert r['quota_killed'] and r['container_destroyed']
+    assert sbx.dir_size(ws) < 120 * 1024 * 1024                      # stopped near the limit, not at disk exhaustion
+
+
+def test_image_build_retries_transient_registry_errors(monkeypatch):
+    calls = []
+
+    class R:
+        def __init__(self, rc, err): self.returncode, self.stderr = rc, err
+
+    def fake_run(cmd, **kw):
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            return R(1, 'No such image')
+        calls.append(cmd)
+        return R(1, '429 Too Many Requests') if len(calls) < 3 else R(0, '')
+    monkeypatch.setattr(sbx.subprocess, 'run', fake_run)
+    monkeypatch.setattr(sbx.time, 'sleep', lambda s: None)
+    sbx.ensure_image('gotham-sandbox:latest')
+    assert len(calls) == 3                                            # two 429s retried, third succeeded
+
+
+# FM-14 mixed-uid deployment (container API uid != host worker uid) and misconfiguration diagnostics
+def _as_uid(uid, code, env_extra):
+    def demote():
+        os.setgid(uid)
+        os.setuid(uid)
+    return subprocess.run([sys.executable, '-c', code], cwd=ROOT, env={**os.environ, **env_extra}, preexec_fn=demote, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason='needs root to simulate a second uid')
+def test_audit_dir_permissions_are_not_clobbered_and_preflight_names_the_problem(env):
+    import shutil
+    import tempfile
+    base = Path(tempfile.mkdtemp(prefix='gotham-uid-'))              # world-traversable (pytest's tmp dir is root-only)
+    try:
+        base.chmod(0o755)
+        shared, d2 = base / 'audit', base / 'data'
+        for d in (shared, d2):
+            d.mkdir()
+            d.chmod(0o777)
+        from gotham.core.audit import AuditWriter
+        AuditWriter(shared / 'specter.sqlite3')                      # root worker touches a pre-existing shared dir
+        assert (shared.stat().st_mode & 0o777) == 0o777              # ...and must NOT re-permission it (this locked the API out before)
+        probe = ('from gotham.core import preflight; import json; c = preflight.run("api"); '
+                 'print(json.dumps([x for x in c if x["status"] == "fail"]))')
+        r = _as_uid(10001, probe, {'GOTHAM_DATA_DIR': str(d2), 'GOTHAM_STORE_DB': str(d2 / 'gotham.sqlite3'),
+                                'GOTHAM_AUDIT_DB': str(shared / 'specter.sqlite3')})
+        assert r.returncode == 0, r.stderr[-400:]
+        failed = {c['name'] for c in json.loads(r.stdout)}
+        assert failed & {'audit_key_access', 'audit_db_access'}      # root-owned 0600 files: other uid is told exactly why
+        assert 'uid=10001' in r.stdout and 'GOTHAM_UID' in r.stdout
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason='needs root to simulate a second uid')
+def test_worker_refuses_to_start_when_audit_dir_is_unusable(env):
+    import shutil
+    import tempfile
+    base = Path(tempfile.mkdtemp(prefix='gotham-uid-'))
+    try:
+        base.chmod(0o755)
+        (base / 'audit').mkdir()                                     # root-owned 0755: uid 10001 cannot write here
+        (base / 'audit').chmod(0o755)
+        (base / 'data').mkdir()
+        (base / 'data').chmod(0o777)
+
+        def demote():
+            os.setgid(10001)
+            os.setuid(10001)
+        p = subprocess.run([sys.executable, '-m', 'gotham.core.worker'], cwd=ROOT, capture_output=True, text=True, timeout=60, preexec_fn=demote,
+                           env={**os.environ, 'GOTHAM_DATA_DIR': str(base / 'data'), 'GOTHAM_STORE_DB': str(base / 'data' / 'g.sqlite3'),
+                                'GOTHAM_AUDIT_DB': str(base / 'audit' / 'a.sqlite3')})
+        assert p.returncode == 3, p.stderr[-500:]                    # fail fast with a distinct exit code
+        assert 'preflight FAIL' in p.stderr and 'audit_dir_writable' in p.stderr and 'refusing to start' in p.stderr
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_preflight_endpoint_and_infra_degrade_gracefully(env, monkeypatch):
+    monkeypatch.setenv('GOTHAM_BATMAN_TOKEN', 'b' * 32)
+    monkeypatch.setenv('GOTHAM_OPERATOR_TOKEN', 'o' * 32)
+    v4.reset_for_tests()
+    from gotham.app import app
+    from gotham.core.audit import AuditReader as AR
+    with TestClient(app) as c:
+        h = {'Authorization': 'Bearer ' + 'o' * 32}
+        pf = c.get('/api/v4/preflight', headers=h).json()
+        assert isinstance(pf['checks'], list) and {x['name'] for x in pf['checks']} >= {'data_dir_writable', 'audit_dir_writable', 'docker_daemon'}
+        monkeypatch.setattr(AR, 'verify', lambda self: (_ for _ in ()).throw(PermissionError('denied: /audit/specter.key')))
+        r = c.get('/api/v4/infra', headers=h)
+        assert r.status_code == 200 and r.json()['audit']['valid'] is False and 'PermissionError' in r.json()['audit']['error']
+    v4.reset_for_tests()

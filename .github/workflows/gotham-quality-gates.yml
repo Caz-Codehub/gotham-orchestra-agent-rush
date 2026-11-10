@@ -15,10 +15,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
+      - name: Install dependencies (runtime + isolated scanner venv)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
+          python -m venv .scanners
+          .scanners/bin/pip install -q -r requirements-scanners.txt
       - name: Compile Python source
         run: python -m compileall -q gotham tests scripts
       - name: Build sandbox images (real Docker)
@@ -32,10 +34,15 @@ jobs:
         run: python -m pytest -q -ra --maxfail=5
         env:
           GOTHAM_RUN_DOCKER_TESTS: '1'
-      - name: Audit dependencies
+      - name: Audit runtime dependencies (hard gate)
         run: python -m pip_audit -r requirements.txt
-      - name: Self-scan with Gotham's Semgrep rule-pack
-        run: semgrep scan --config rules/semgrep --metrics=off --error --severity ERROR gotham/core gotham/app.py || true
+      - name: Audit scanner dependencies (time-boxed exceptions in docs/GOTHAM_SECURITY_EXCEPTIONS.md)
+        run: |
+          python -m pip_audit -r requirements-scanners.txt \
+            --ignore-vuln CVE-2026-59951 --ignore-vuln CVE-2026-116685 --ignore-vuln CVE-2026-116684 \
+            --ignore-vuln CVE-2026-116686 --ignore-vuln CVE-2026-114603
+      - name: Self-scan with Gotham's Semgrep rule-pack (hard gate)
+        run: .scanners/bin/semgrep scan --config rules/semgrep --metrics=off --error --severity ERROR gotham/core gotham/app.py
       - name: Reject committed credential files
         run: |
           python - <<'PY'

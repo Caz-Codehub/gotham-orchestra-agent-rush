@@ -30,6 +30,14 @@ SECRET_RES = {
 SKIP_DIRS = {'.git', '.deps', 'node_modules', '__pycache__', '.venv'}
 
 
+def _find_tool(name: str, env_var: str) -> str | None:
+    """Scanner resolution order: explicit env var, isolated .scanners venv, this interpreter's venv, PATH."""
+    for cand in (os.environ.get(env_var), str(ROOT / '.scanners' / 'bin' / name), str(Path(sys.executable).parent / name), shutil.which(name)):
+        if cand and Path(cand).is_file() and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
 def _walk(base: Path):
     for p in base.rglob('*'):
         if p.is_file() and not p.is_symlink() and not (SKIP_DIRS & set(p.parts)):
@@ -45,9 +53,9 @@ def _finding(rule, severity, path, line, message, evidence='', **extra):
       {'path': ('str', False, 'relative dir or file, default .')}, ('Sentinel', 'Scout'))
 def semgrep_scan(ctx, path='.'):
     target = ctx.path(path)
-    exe = shutil.which('semgrep') or str(Path(sys.executable).parent / 'semgrep')
-    if not Path(exe).exists():
-        raise ToolError('semgrep is not installed')
+    exe = _find_tool('semgrep', 'GOTHAM_SEMGREP_BIN')
+    if not exe:
+        raise ToolError('semgrep is not installed (install requirements-scanners.txt into .scanners or set GOTHAM_SEMGREP_BIN)')
     r = subprocess.run([exe, 'scan', '--config', str(SEMGREP_RULES), '--json', '--metrics=off', '--disable-version-check',
                         '--quiet', '--timeout', '20', str(target)], capture_output=True, text=True,
                        timeout=ctx.remaining(180), env={**os.environ, 'SEMGREP_SEND_METRICS': 'off'})

@@ -12,14 +12,14 @@ services:
       GOTHAM_VIEWER_TOKEN: ${GOTHAM_VIEWER_TOKEN:-}
       GOTHAM_AUDIT_DB: /audit/specter.sqlite3
       GOTHAM_INFERENCE_PROVIDER: ${GOTHAM_INFERENCE_PROVIDER:-none}
+    # Bind mounts (not named volumes) so the HOST worker service shares the same store, artifacts and audit journal.
+    # Directories must be owned by GOTHAM_UID (default 10001; use the host `gotham` user's uid so the worker can write too).
+    user: "${GOTHAM_UID:-10001}:${GOTHAM_GID:-10001}"
     volumes:
-      - gotham-data:/data
-      - gotham-audit:/audit      # separate volume: never mounted into sandboxes or workspaces
+      - /var/lib/gotham:/data
+      - /var/lib/gotham-audit:/audit   # separate directory: never mounted into sandboxes or workspaces
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 512m
-volumes:
-  gotham-data:
-  gotham-audit:

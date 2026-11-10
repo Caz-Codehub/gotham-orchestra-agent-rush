@@ -17,3 +17,4 @@ receipts/private/
 data/
 data-audit/
 *.executed.ipynb
+.scanners/
