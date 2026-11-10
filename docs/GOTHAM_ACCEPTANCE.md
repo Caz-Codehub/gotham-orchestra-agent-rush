@@ -2,8 +2,8 @@
 
 Legend: **PASS** executed for real and asserted · **FAIL** · **BLOCKED** needs an owner action (see GOTHAM_BLOCKERS.md) · **NOT TESTED**.
 Environment of record: Claude cloud container (Linux, 4 vCPU, 16 GB, no GPU), Docker 29.9 daemon started in-session, Python 3.13, 2026-11-10.
-Reproduce: `GOTHAM_RUN_DOCKER_TESTS=1 python -m pytest -q -ra` → **124 tests (≈90 s)**; on 2026-11-10 a clean-clone Python 3.12 run reported 122 passed + 2 skipped-by-environment (see FAILURE_MODES FM-14 note).
-**Real GitHub Actions status: FAILED on `643ee58`, fixes pending a re-run** — do not treat this document as CI-green evidence until the Actions run is green. No mocked tools; one scripted-model suite is labelled below.
+Reproduce: `GOTHAM_RUN_DOCKER_TESTS=1 python -m pytest -q -ra` → **126 tests collected; 123 pass + 3 skip when run as an unprivileged user** (real runner and non-root clean-clone simulation agree).
+**Real GitHub Actions status: GREEN on `adaf35b`** (run 42882583863: 123 passed / 3 skipped; run 42882583986 fast tier). It was RED on `643ee58` (see FAILURE_MODES FM-15/16). No mocked tools; one scripted-model suite is labelled below.
 
 | # | Acceptance item | Result | Evidence (test) |
 |---|---|---|---|

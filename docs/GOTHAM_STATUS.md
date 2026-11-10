@@ -1,8 +1,9 @@
 # Gotham 4.0 development ledger
 
-_Last updated: 2026-11-10 (session 1, hardening pass). Branch `claude/gotham-4-0-execution-8f66gu`. Local suite: **124 tests** (full run on this machine: all pass).
-**Real GitHub Actions on commit `643ee58` FAILED** (quality-gates: 101 passed / 2 legacy-test failures; tests.yml: 9 failures, non-root runner). Causes fixed locally in `16a9099` and
-earlier hardening commits — **not yet confirmed green on GitHub until pushed and re-run** (see GOTHAM_FAILURE_MODES FM-15/16)._
+_Last updated: 2026-11-10 (session 1, hardening pass). Branch `claude/gotham-4-0-execution-8f66gu`._
+**Real GitHub Actions on `adaf35b`: both workflows GREEN** — quality-gates run 42882583863 (**123 passed, 3 skipped**, runtime pip-audit clean, scanner audit clean with 5 documented
+exceptions, Semgrep self-scan 0 findings, credential-file check) and `tests.yml` run 42882583986. History: the same branch at `643ee58` was **RED** on both workflows
+(non-root runner exposed FM-15/16); fixed in `16a9099`…`adaf35b`. The 3 skips are tests that need root to simulate a second uid (they pass locally as root).
 
 ## Repository audit (starting point)
 - `main` = Gotham 2.x/3.x demo: single-mission Docker code-repair, static agent labels, in-memory single-lock execution, SQLite ledger of receipts, rule-based Specter journal.
@@ -21,6 +22,7 @@ earlier hardening commits — **not yet confirmed green on GitHub until pushed a
 | `0ac65ac` | failure-mode fixes (finalize race, cancel, hung lease, body limit, schema version), resilience tests, CD simulation |
 | `c01f9e3` | audit-dir clobber fix, preflight, sandbox output/disk limits, scanner isolation, SQL hardening, container verification |
 | `16a9099` | fixes for failures found by real CI; non-root CI simulation |
+| `adaf35b` | hermetic legacy DB paths; CI pull retries — **real CI green** |
 
 ## Environment facts
 Ephemeral container; Docker daemon started with `nohup dockerd &`; Docker-build TLS needs `GOTHAM_BUILD_CA_BUNDLE`; research image build ≈ 10 min over the proxy (922 MB);

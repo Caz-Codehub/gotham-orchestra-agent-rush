@@ -50,7 +50,7 @@ probe that runs the real code; (3) fix what the probe proves broken; (4) keep th
 
 ## D. CI failure modes
 **Lesson from real CI:** simulation is only as faithful as its environment. My first simulation ran as **root** on a machine that has `/root/.ccr/`, so it hid FM-15; the real runner is
-unprivileged. `scripts/ci_local.sh` now supports `CI_RUN_AS=runner`. Real runs on GitHub (run ids 42868196053 / 42868196204) are the ground truth and are checked via the Actions API.
+unprivileged. `scripts/ci_local.sh` now supports `CI_RUN_AS=runner`. Real runs on GitHub are the ground truth and are checked via the Actions API: RED on `643ee58` (runs 42868196053 / 42868196204), GREEN on `adaf35b` (42882583863 / 42882583986); after fixing, the non-root simulation and the real runner produced identical counts (123 passed / 3 skipped).
 (simulated by `scripts/ci_local.sh`: clean clone, fresh Python 3.12 venv, same steps as the workflows)
 | Risk | Contingency |
 |---|---|
