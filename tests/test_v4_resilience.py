@@ -275,9 +275,12 @@ def _as_uid(uid, code, env_extra):
         os.setgid(uid)
         os.setuid(uid)
     try:
-        return subprocess.run([sys.executable, '-c', code], cwd=ROOT, env={**os.environ, **env_extra}, preexec_fn=demote, capture_output=True, text=True)
+        r = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env={**os.environ, **env_extra}, preexec_fn=demote, capture_output=True, text=True)
     except PermissionError:
         pytest.skip(f'uid {uid} cannot execute this interpreter / enter the repo (private checkout dir); run from a world-readable path')
+    if r.returncode != 0 and "No module named 'gotham'" in r.stderr:
+        pytest.skip(f'uid {uid} cannot import the checkout (private directory); run from a world-readable path')
+    return r
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason='needs root to simulate a second uid')
@@ -327,6 +330,8 @@ def test_worker_refuses_to_start_when_audit_dir_is_unusable(env):
                                     'GOTHAM_AUDIT_DB': str(base / 'audit' / 'a.sqlite3')})
         except PermissionError:
             pytest.skip('uid 10001 cannot execute this interpreter / enter the repo (private checkout dir)')
+        if p.returncode != 0 and "No module named 'gotham'" in p.stderr:
+            pytest.skip('uid 10001 cannot import the checkout (private directory); run from a world-readable path')
         assert p.returncode == 3, p.stderr[-500:]                    # fail fast with a distinct exit code
         assert 'preflight FAIL' in p.stderr and 'audit_dir_writable' in p.stderr and 'refusing to start' in p.stderr
     finally:
