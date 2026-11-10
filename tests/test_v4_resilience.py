@@ -274,7 +274,10 @@ def _as_uid(uid, code, env_extra):
     def demote():
         os.setgid(uid)
         os.setuid(uid)
-    return subprocess.run([sys.executable, '-c', code], cwd=ROOT, env={**os.environ, **env_extra}, preexec_fn=demote, capture_output=True, text=True)
+    try:
+        return subprocess.run([sys.executable, '-c', code], cwd=ROOT, env={**os.environ, **env_extra}, preexec_fn=demote, capture_output=True, text=True)
+    except PermissionError:
+        pytest.skip(f'uid {uid} cannot execute this interpreter / enter the repo (private checkout dir); run from a world-readable path')
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason='needs root to simulate a second uid')
@@ -318,9 +321,12 @@ def test_worker_refuses_to_start_when_audit_dir_is_unusable(env):
         def demote():
             os.setgid(10001)
             os.setuid(10001)
-        p = subprocess.run([sys.executable, '-m', 'gotham.core.worker'], cwd=ROOT, capture_output=True, text=True, timeout=60, preexec_fn=demote,
-                           env={**os.environ, 'GOTHAM_DATA_DIR': str(base / 'data'), 'GOTHAM_STORE_DB': str(base / 'data' / 'g.sqlite3'),
-                                'GOTHAM_AUDIT_DB': str(base / 'audit' / 'a.sqlite3')})
+        try:
+            p = subprocess.run([sys.executable, '-m', 'gotham.core.worker'], cwd=ROOT, capture_output=True, text=True, timeout=60, preexec_fn=demote,
+                               env={**os.environ, 'GOTHAM_DATA_DIR': str(base / 'data'), 'GOTHAM_STORE_DB': str(base / 'data' / 'g.sqlite3'),
+                                    'GOTHAM_AUDIT_DB': str(base / 'audit' / 'a.sqlite3')})
+        except PermissionError:
+            pytest.skip('uid 10001 cannot execute this interpreter / enter the repo (private checkout dir)')
         assert p.returncode == 3, p.stderr[-500:]                    # fail fast with a distinct exit code
         assert 'preflight FAIL' in p.stderr and 'audit_dir_writable' in p.stderr and 'refusing to start' in p.stderr
     finally:
@@ -341,3 +347,32 @@ def test_preflight_endpoint_and_infra_degrade_gracefully(env, monkeypatch):
         r = c.get('/api/v4/infra', headers=h)
         assert r.status_code == 200 and r.json()['audit']['valid'] is False and 'PermissionError' in r.json()['audit']['error']
     v4.reset_for_tests()
+
+
+# FM-15 (found by REAL GitHub Actions): a non-root runner cannot stat /root/...; that crashed every image build
+@pytest.mark.skipif(os.geteuid() != 0, reason='needs root to simulate an unprivileged runner')
+def test_unreadable_ca_bundle_path_is_not_fatal_for_unprivileged_user(env):
+    code = ('from gotham.core import sbx; print(repr(sbx.ca_bundle_bytes()), sbx.usable_ca_path())')
+    r = _as_uid(10001, code, {'GOTHAM_BUILD_CA_BUNDLE': '/root/.ccr/ca-bundle.crt', 'HOME': '/tmp'})
+    assert r.returncode == 0, r.stderr[-400:]
+    assert r.stdout.strip() == "b'' None"
+    r = _as_uid(10001, code, {'GOTHAM_BUILD_CA_BUNDLE': '/nonexistent/ca.pem', 'HOME': '/tmp'})
+    assert r.stdout.strip() == "b'' None"
+
+
+@needs_docker
+def test_sbx_run_builds_managed_images_on_demand(env, monkeypatch):
+    built = []
+    monkeypatch.setattr(sbx, 'image_present', lambda i: False if not built else True)
+    monkeypatch.setattr(sbx, '_build_image', lambda i: built.append(i))
+    monkeypatch.setattr(sbx, 'docker_available', lambda: True)
+
+    class Boom(Exception):
+        pass
+
+    def stop(*a, **k):
+        raise Boom
+    monkeypatch.setattr(sbx.subprocess, 'Popen', stop)
+    with pytest.raises(Boom):
+        sbx.run('gotham-sandbox:latest', ['true'])
+    assert built == ['gotham-sandbox:latest']                         # callers no longer need a prior ensure_image

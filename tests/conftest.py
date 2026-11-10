@@ -17,7 +17,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv('GOTHAM_DATA_DIR', str(tmp_path / 'data'))
     monkeypatch.setenv('GOTHAM_AUDIT_DB', str(tmp_path / 'audit' / 'specter.sqlite3'))
     monkeypatch.setenv('GOTHAM_STORE_DB', str(tmp_path / 'data' / 'gotham.sqlite3'))
-    monkeypatch.setenv('GOTHAM_BUILD_CA_BUNDLE', os.environ.get('GOTHAM_BUILD_CA_BUNDLE', '/root/.ccr/ca-bundle.crt'))
     return tmp_path
 
 
@@ -30,3 +29,13 @@ def alfred(env):
 def run_until_done(alfred, concurrency=4, **kw):
     from gotham.core.worker import run_worker
     run_worker(alfred, once=True, concurrency=concurrency, poll=0.1, **kw)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tier the suite: anything that needs the Docker daemon is `integration`; anything that needs the research image is `research`."""
+    for item in items:
+        for m in item.iter_markers('skipif'):
+            if 'Docker daemon required' in str(m.kwargs.get('reason', '')):
+                item.add_marker(pytest.mark.integration)
+        if item.get_closest_marker('integration') and ('notebook' in item.name or 'all_five' in item.name):
+            item.add_marker(pytest.mark.research)

@@ -258,8 +258,8 @@ def install_deps(ctx, requirements='requirements.txt'):
         raise ToolDenied('bad requirements path')
     sbx.ensure_image('gotham-sandbox:latest')
     env = {'PIP_DISABLE_PIP_VERSION_CHECK': '1'}
-    ca = os.environ.get('GOTHAM_BUILD_CA_BUNDLE')
-    ro = [(Path(ca), '/tmp/ca.crt')] if ca and Path(ca).is_file() else []
+    ca = sbx.usable_ca_path()
+    ro = [(ca, '/tmp/ca.crt')] if ca else []
     if ro:
         env['PIP_CERT'] = '/tmp/ca.crt'
     r = sbx.run('gotham-sandbox:latest', ['pip', 'install', '--no-cache-dir', '--target', '/work/.deps', '-r', requirements],

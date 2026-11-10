@@ -63,9 +63,38 @@ def image_present(image: str) -> bool:
         return False
 
 
+def ca_bundle_bytes() -> bytes:
+    """Optional extra CA (TLS-inspecting proxy). Any problem reading it (missing, unreadable by this uid) means 'no extra CA', never a crash."""
+    ca = os.environ.get('GOTHAM_BUILD_CA_BUNDLE', '')
+    if not ca:
+        return b''
+    try:
+        return Path(ca).read_bytes()
+    except OSError:
+        return b''
+
+
+def usable_ca_path() -> Path | None:
+    ca = os.environ.get('GOTHAM_BUILD_CA_BUNDLE', '')
+    try:
+        return Path(ca) if ca and Path(ca).is_file() and os.access(ca, os.R_OK) else None
+    except OSError:
+        return None
+
+
+_ENSURE_LOCK = threading.Lock()
+
+
 def ensure_image(image: str) -> None:
     if image_present(image):
         return
+    with _ENSURE_LOCK:                 # concurrent tasks must not build the same image twice
+        if image_present(image):
+            return
+        _build_image(image)
+
+
+def _build_image(image: str) -> None:
     df = IMAGE_FILES.get(image)
     if not df:
         raise SandboxError(f'Image {image} is not present and has no build recipe')
@@ -75,8 +104,7 @@ def ensure_image(image: str) -> None:
         ctx = Path(ctx)
         shutil.copytree(ROOT / 'docker', ctx, dirs_exist_ok=True)
         shutil.copy(ROOT / df, ctx / 'Dockerfile')
-        ca = os.environ.get('GOTHAM_BUILD_CA_BUNDLE', '')
-        (ctx / 'ca.crt').write_bytes(Path(ca).read_bytes() if ca and Path(ca).is_file() else b'')
+        (ctx / 'ca.crt').write_bytes(ca_bundle_bytes())
         for attempt in range(1, 4):
             r = subprocess.run(['docker', 'build', '-q', '-t', image, str(ctx)], capture_output=True, text=True, timeout=1500)
             transient = re.search(r'(?i)429|toomanyrequests|timeout|timed out|temporary failure|connection (reset|refused)|TLS|EOF|503|502', r.stderr)
@@ -114,6 +142,8 @@ def run(image: str, cmd: list[str], *, mount: Path | None = None, rw: bool = Fal
         ro_mounts: list[tuple[Path, str]] | None = None, tmpfs: str = '64m') -> dict:
     if not docker_available():
         raise SandboxError('Docker daemon unavailable; refusing to execute untrusted code on the host')
+    if image in IMAGE_FILES:
+        ensure_image(image)            # managed images are built on demand: callers never depend on an earlier step
     name = 'gotham-' + uuid.uuid4().hex[:16]
     args = ['docker', 'run', '--rm', '--name', name, '--label', 'gotham=1', '--label', f'gotham-task={CURRENT_TASK.get()}', '--pull=never',
             '--network', (network if isinstance(network, str) else 'bridge') if network else 'none', '--read-only', '--cap-drop=ALL',

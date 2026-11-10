@@ -1,22 +1,29 @@
 name: gotham-unit-and-docker-tests
+# Fast tier: unit/API/policy tests (no sandbox-image builds) + the legacy Docker containment tests.
+# The full real-execution tier (images, notebooks, lab, recovery) runs in gotham-quality-gates.yml.
 on:
   push:
   pull_request:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt pytest httpx
-      - name: Unit and boundary tests
-        run: python -m pytest -q -m "not docker"
-      - name: Pull constrained sandbox image
+      - name: Install dependencies (runtime + isolated scanner venv)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m venv .scanners
+          .scanners/bin/pip install -q -r requirements-scanners.txt
+      - name: Unit, API and policy tests (no Docker images required)
+        run: python -m pytest -q -m "not integration and not docker and not research"
+      - name: Pull constrained sandbox image (legacy tests)
         run: docker pull python:3.12-alpine
-      - name: Run real Docker containment tests
+      - name: Run legacy Docker containment tests
         env:
           GOTHAM_RUN_DOCKER_TESTS: '1'
         run: python -m pytest -q -m docker
