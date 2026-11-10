@@ -24,7 +24,7 @@ jobs:
       - name: Compile Python source
         run: python -m compileall -q gotham tests scripts
       - name: Pull base image used by the legacy sandbox tests
-        run: docker pull python:3.12-alpine
+        run: for i in 1 2 3; do docker pull python:3.12-alpine && break; sleep $((i*15)); done; docker image inspect python:3.12-alpine
       - name: Build sandbox images (real Docker)
         run: |
           python - <<'PY'

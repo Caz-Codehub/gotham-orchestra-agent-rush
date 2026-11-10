@@ -14,7 +14,7 @@ if [ -n "$AS" ]; then
   chmod 755 "$W"
   if [ -r "${GOTHAM_BUILD_CA_BUNDLE:-/nonexistent}" ]; then cp "$GOTHAM_BUILD_CA_BUNDLE" "$W/ca.crt"; chmod 644 "$W/ca.crt"; export GOTHAM_BUILD_CA_BUNDLE=$W/ca.crt PIP_CERT=$W/ca.crt; fi
 fi
-asuser() { if [ -n "$AS" ]; then runuser -u "$AS" -- env "HOME=/home/$AS" "PATH=$PATH" "GOTHAM_RUN_DOCKER_TESTS=1" "GOTHAM_BUILD_CA_BUNDLE=${GOTHAM_BUILD_CA_BUNDLE:-}" "PIP_CERT=${PIP_CERT:-}" "$@"; else "$@"; fi; }
+asuser() { if [ -n "$AS" ]; then runuser -u "$AS" -- env "HOME=/home/$AS" "PATH=$PATH" "GOTHAM_RUN_DOCKER_TESTS=1" "GOTHAM_BUILD_CA_BUNDLE=${GOTHAM_BUILD_CA_BUNDLE:-}" "PIP_CERT=${PIP_CERT:-}" "REQUESTS_CA_BUNDLE=${PIP_CERT:-}" "SSL_CERT_FILE=${PIP_CERT:-}" "CURL_CA_BUNDLE=${PIP_CERT:-}" "NODE_EXTRA_CA_CERTS=${PIP_CERT:-}" "$@"; else "$@"; fi; }
 step() { local n=$1; shift; local s=$(date +%s); echo "::group::$n"; if asuser "$@" > "$W/$n.log" 2>&1; then echo "PASS  $n ($(( $(date +%s)-s ))s)"; else echo "FAIL  $n ($(( $(date +%s)-s ))s) -> $W/$n.log"; tail -15 "$W/$n.log"; R=1; fi; }
 git clone -q --no-hardlinks "$HERE" "$W/repo" && cd "$W/repo" || exit 9
 [ -n "$AS" ] && chown -R "$AS" "$W/repo" "$W" 
@@ -24,7 +24,7 @@ step venv            $PYBIN -m venv "$W/venv"
 step install         "$W/venv/bin/pip" install -q -r requirements.txt -r requirements-dev.txt
 PY=$W/venv/bin/python
 step scanner_venv    bash -c "$PYBIN -m venv .scanners && .scanners/bin/pip install -q -r requirements-scanners.txt"
-step pull_alpine     docker pull python:3.12-alpine
+step pull_alpine     bash -c 'for i in 1 2 3; do docker pull python:3.12-alpine && exit 0; sleep $((i*8)); done; docker image inspect python:3.12-alpine >/dev/null'
 step compile         $PY -m compileall -q gotham tests scripts
 step build_images    $PY - <<'PY'
 from gotham.core import sbx

@@ -22,7 +22,7 @@ jobs:
       - name: Unit, API and policy tests (no Docker images required)
         run: python -m pytest -q -m "not integration and not docker and not research"
       - name: Pull constrained sandbox image (legacy tests)
-        run: docker pull python:3.12-alpine
+        run: for i in 1 2 3; do docker pull python:3.12-alpine && break; sleep $((i*15)); done; docker image inspect python:3.12-alpine
       - name: Run legacy Docker containment tests
         env:
           GOTHAM_RUN_DOCKER_TESTS: '1'
