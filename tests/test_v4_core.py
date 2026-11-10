@@ -272,3 +272,21 @@ def test_secrets_and_config_scanners(env):
     assert T.call(ctx, 'secrets_scan', {})['findings']
     rules = {f['rule'] for f in T.call(ctx, 'config_audit', {})['findings']}
     assert {'docker.runs-as-root', 'docker.unpinned-base'} <= rules
+
+
+from tests.conftest import needs_docker
+
+
+@needs_docker
+def test_fuzzer_finds_planted_crash_in_sandbox_reproducibly(env):
+    ctx = _ctx(env, 'Cipher')
+    (ctx.workspace / 'parser.py').write_text(
+        'def parse(s):\n    if s.startswith("LEN:"):\n        n = int(s[4:].split(";")[0])\n        return [0] * n\n'
+        '    if "%" in s:\n        return s.split("%")[3]\n    return s\n')
+    a = T.call(ctx, 'fuzz_function', {'module': 'parser', 'function': 'parse', 'iterations': 3000, 'seeds': ['LEN:5;x', 'a%b%c', 'hello']})
+    types = {c['type'] for c in a['unique_crashes']}
+    assert {'ValueError', 'IndexError'} & types and a['container_destroyed'] and a['network'] == 'none'
+    b = T.call(ctx, 'fuzz_function', {'module': 'parser', 'function': 'parse', 'iterations': 3000, 'seeds': ['LEN:5;x', 'a%b%c', 'hello']})
+    assert {c['type'] for c in a['unique_crashes']} == {c['type'] for c in b['unique_crashes']}     # same seed => reproducible
+    with pytest.raises(T.ToolDenied):
+        T.call(ctx, 'fuzz_function', {'module': '../x', 'function': 'f'})

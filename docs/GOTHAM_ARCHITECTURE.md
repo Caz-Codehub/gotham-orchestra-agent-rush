@@ -22,7 +22,7 @@ Batman ──(Bearer token, role=batman)──► Command Center (/command) ─�
 | Durable state | `core/store.py` | Leases (default 30 s), bounded retries (2), dependency blocking, idempotency keys, cancel flag, approvals, usage metering |
 | Orchestration | `core/engine.py` | Mission kinds: engineering, security_audit, log_analysis, malware_analysis, research, lab_validation, full_spectrum, objective (model-only) |
 | Execution | `core/playbooks`, `core/runtime.py` | Playbooks = fixed audited tool sequences (no model). Agent mode = JSON tool-calling loop, needs a configured model |
-| Tools | `core/tools.py`, `sectools.py`, `research.py`, `lab.py` | 36 tools; per-agent allowlists; `risk=high` needs Batman approval |
+| Tools | `core/tools.py`, `sectools.py`, `research.py`, `lab.py` | 34 tools; per-agent allowlists; `risk=high` needs Batman approval |
 | Sandbox | `core/sbx.py` | `--network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534 --pids/mem/cpu limits`, destroyed-container proof, task labels for orphan cleanup |
 | Specter | `core/audit.py` | Separate SQLite file+key; UPDATE/DELETE triggers abort; HMAC chain; writer/reader split; secret redaction |
 | Auth | `core/auth.py` | Roles batman/operator/viewer; tokens ≥20 chars from env; constant-time compare; lockout after 10 failures/5 min/IP |

@@ -143,25 +143,31 @@ def test_failing_notebook_is_never_marked_complete(alfred):
 
 @needs_research
 def test_alfred_delegates_real_work_to_all_five_agents(alfred):
-    sections = {'engineering': {'files': BUGGY_PROJECT, 'patch': FIX_PATCH},
+    project = {**BUGGY_PROJECT, **WEAK_PROJECT}            # a project with a defect (Forge) and weaknesses (Sentinel)
+    sections = {'engineering': {'files': project, 'patch': FIX_PATCH},
                 'security': {'expect_rules': WEAK_EXPECTED},
                 'malware': {'sample': {'name': 'inert.py', 'content': INERT_SAMPLE}, 'approved_inert': True},
                 'research': {'name': 'analysis', 'cells': NOTEBOOK_CELLS}}
     mid = alfred.submit('full_spectrum', 'Full spectrum mission across all five specialists', {'sections': sections}, 'test')
-    # Sentinel scans Forge's built project: add weak file via patch so the scan has something to find
-    t0 = time.time()
     run_until_done(alfred, concurrency=5)
     m = alfred.store.get_mission(mid)
     report = m['result']
-    assert report['agents_used'] == ['Cipher', 'Forge', 'Oracle', 'Scout', 'Sentinel'] or set(report['agents_used']) >= {'Scout', 'Forge', 'Oracle', 'Cipher'}
-    forge, scout = tasks(alfred, mid)[('Forge', 'build_and_verify')], tasks(alfred, mid)[('Scout', 'recon')]
-    assert scout['finished'] <= forge['started']                          # dependency order respected
-    # Cipher and Oracle have no dependencies: they ran concurrently with Scout/Forge
-    cip, ora = tasks(alfred, mid)[('Cipher', 'malware_triage')], tasks(alfred, mid)[('Oracle', 'research')]
-    assert cip['started'] < forge['finished'] or ora['started'] < forge['finished']
+    assert m['status'] == 'verified', json.dumps(report['checks'], indent=1)
+    assert report['agents_used'] == ['Cipher', 'Forge', 'Oracle', 'Scout', 'Sentinel']
+    T = tasks(alfred, mid)
+    assert all(t['status'] == 'succeeded' for t in T.values()) and len(T) == 5
+    assert T[('Scout', 'recon')]['finished'] <= T[('Forge', 'build_and_verify')]['started']      # dependency order respected
+    assert T[('Forge', 'build_and_verify')]['finished'] <= T[('Sentinel', 'audit')]['started']
+    # Cipher and Oracle have no dependencies: they ran while Scout/Forge were still working
+    assert T[('Cipher', 'malware_triage')]['started'] < T[('Forge', 'build_and_verify')]['finished']
+    assert T[('Oracle', 'research')]['started'] < T[('Forge', 'build_and_verify')]['finished']
     msgs = alfred.store.messages_for(mid)
-    assert {x['recipient'] for x in msgs if x['type'] == 'task_assignment'} >= {'Scout', 'Forge', 'Cipher', 'Oracle'}
-    assert report['report_sha256'] and report['artifacts']
+    assert {x['recipient'] for x in msgs if x['type'] == 'task_assignment'} == {'Scout', 'Forge', 'Cipher', 'Oracle', 'Sentinel'}
+    # every specialist really called tools, and Specter recorded them independently of Alfred's report
+    ev = AuditReader(config.audit_path()).events(mid, limit=5000)
+    assert {e['actor'] for e in ev if e['action'] == 'tool_call'} == {'Scout', 'Forge', 'Cipher', 'Oracle', 'Sentinel'}
+    assert all(t['result']['receipt']['tool_calls'] > 0 for t in T.values())
+    assert report['report_sha256'] and len(report['artifacts']) >= 6 and AuditReader(config.audit_path()).verify()['valid']
 
 
 def test_recovery_after_worker_is_killed_mid_task(env):

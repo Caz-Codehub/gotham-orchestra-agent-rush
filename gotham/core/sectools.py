@@ -453,3 +453,68 @@ def container_scan(ctx, image):
             findings.append(_finding('image.' + v['VulnerabilityID'], v['Severity'].lower(), res['Target'], 0,
                                      f"{v['PkgName']} {v['InstalledVersion']}: {v.get('Title', '')}", fixed=v.get('FixedVersion')))
     return {'engine': 'trivy', 'image': image, 'findings': findings}
+
+
+# ------------------------------------------------------------------ Cipher: controlled fuzzing (in sandbox)
+FUZZ_HARNESS = r'''
+import sys, json, random, importlib, signal, traceback
+sys.path.insert(0, '/work')
+mod, fn, iters, seed, seeds = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), json.loads(sys.argv[5])
+f = getattr(importlib.import_module(mod), fn)
+rng = random.Random(seed)
+def mutate(s):
+    b = bytearray(s.encode('utf-8', 'replace'))
+    for _ in range(rng.randint(1, 4)):
+        op = rng.choice('ifdrt')
+        if op == 'i' or not b: b.insert(rng.randrange(len(b) + 1), rng.choice(b'\x00\xff\'"%{}[]()<>\\/;&|`$0aA-'))
+        elif op == 'f' and b: b[rng.randrange(len(b))] ^= 1 << rng.randrange(8)
+        elif op == 'd' and b: del b[rng.randrange(len(b))]
+        elif op == 'r' and b: b[rng.randrange(len(b)):] = b[rng.randrange(len(b)):] * rng.randint(2, 6)
+        else: b += bytes(rng.choice(b'0123456789 ') for _ in range(rng.randint(1, 40)))
+    return bytes(b[:4000]).decode('utf-8', 'replace')
+class TO(Exception): pass
+def alarm(*a): raise TO()
+signal.signal(signal.SIGALRM, alarm)
+crashes, seen = [], set()
+corpus = list(seeds) or ['']
+for i in range(iters):
+    x = mutate(rng.choice(corpus))
+    signal.setitimer(signal.ITIMER_REAL, 0.5)
+    try:
+        f(x)
+    except TO:
+        kind = 'TIMEOUT'; tb = 'exceeded 0.5s'
+        key = (kind, tb)
+        if key not in seen: seen.add(key); crashes.append({'type': kind, 'input': x[:200], 'detail': tb})
+    except Exception as e:
+        kind = type(e).__name__; tb = traceback.format_exc().strip().splitlines()[-3:]
+        key = (kind, tb[0] if tb else '')
+        if key not in seen: seen.add(key); crashes.append({'type': kind, 'input': x[:200], 'detail': str(e)[:160], 'where': tb[0][:160]})
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+print('GOTHAM_FUZZ ' + json.dumps({'iterations': iters, 'unique_crashes': crashes[:20]}))
+'''
+
+
+@tool('fuzz_function', 'Controlled mutation fuzzing of a Python function (str -> anything) inside the network-less sandbox; returns unique crashes with reproducers.',
+      {'module': ('str', True, 'module file stem in workspace'), 'function': ('str', True, 'function name'),
+       'iterations': ('int', False, 'default 2000, max 20000'), 'seed': ('int', False, 'default 1'), 'seeds': ('list', False, 'seed inputs')},
+      ('Cipher', 'Sentinel'), risk='medium')
+def fuzz_function(ctx, module, function, iterations=2000, seed=1, seeds=None):
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', module) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', function):
+        raise ToolDenied('invalid module/function name')
+    if not ctx.path(f'{module}.py').is_file():
+        raise ToolError('module not found in workspace')
+    sbx.ensure_image('gotham-sandbox:latest')
+    run_dir = ctx.workspace / '.fuzz'
+    run_dir.mkdir(exist_ok=True)
+    (run_dir / 'harness.py').write_text(FUZZ_HARNESS)
+    shutil.copyfile(ctx.path(f'{module}.py'), run_dir / f'{module}.py')
+    r = sbx.run('gotham-sandbox:latest', ['python', '-B', '/work/harness.py', module, function, str(min(max(iterations, 1), 20000)),
+                str(seed), json.dumps([s for s in (seeds or []) if isinstance(s, str)][:20])], mount=run_dir, rw=False,
+                timeout=ctx.remaining(120), memory='128m', cpus='0.5', pids=32)
+    m = re.search(r'GOTHAM_FUZZ (\{.*\})', r['stdout'])
+    if not m:
+        raise ToolError('fuzz harness failed: ' + (r['stderr'] or r['stdout'])[-300:])
+    res = json.loads(m.group(1))
+    return {**res, 'container_destroyed': r['container_destroyed'], 'network': r['network'], 'elapsed_ms': r['elapsed_ms'], 'seed': seed}
