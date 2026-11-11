@@ -209,7 +209,7 @@ class Alfred:
     def _run(self, task, ctx):
         params = dict(task['params'])
         self._seed(ctx, params.pop('files', None))
-        if task['kind'] in ('orchestra_plan', 'orchestra_specialist', 'orchestra_review'):
+        if task['kind'] in ('orchestra_plan', 'orchestra_specialist', 'orchestra_review', 'orchestra_synthesis'):
             from .orchestra_missions import execute
             return execute(ctx, {**params, '_task_kind': task['kind']}, self.client)
         if task['mode'] == 'agent':
