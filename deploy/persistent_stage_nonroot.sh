@@ -85,7 +85,7 @@ accept_orchestra() {
   set -a
   source "$ENVFILE"
   set +a
-  curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \\
+  curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \
     http://127.0.0.1:8001/api/v4/orchestras > "$BASE/last-orchestras.json" || return 1
   "$SRC/.venv/bin/python" - "$BASE/last-orchestras.json" <<'PY'
 import json,sys
@@ -96,7 +96,7 @@ assert all(len(o['specialists'])==3 and o['reports_to']=='Alfred' for o in d['or
 print('PASS four captains and twelve scoped specialist definitions')
 PY
   for i in $(seq 1 12); do
-    if curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \\
+    if curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \
       http://127.0.0.1:8001/api/v4/infra > "$BASE/last-infra.json"; then
       if "$SRC/.venv/bin/python" - "$BASE/last-infra.json" <<'PY'
 import json,sys
