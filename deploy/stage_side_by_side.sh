@@ -97,7 +97,8 @@ ReadWritePaths=$ROOT/data $ROOT/audit
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now gotham-v4-staging.service >/dev/null
+systemctl enable gotham-v4-staging.service >/dev/null
+systemctl restart gotham-v4-staging.service
 echo "Waiting for the staging localhost health check"
 ok=0
 for i in $(seq 1 20); do
