@@ -62,7 +62,7 @@ stop_owned() {
 owned_worker_pid() {
   test -n "$1" && [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null &&
   test -r "/proc/$1/cmdline" &&
-  tr '\\0' ' ' < "/proc/$1/cmdline" | grep -q 'gotham.core.orchestra_worker'
+  tr '\0' ' ' < "/proc/$1/cmdline" | grep -q 'gotham.core.orchestra_worker'
 }
 stop_owned_worker() {
   if owned_worker_pid "$1"; then
@@ -73,10 +73,10 @@ stop_owned_worker() {
 launch_worker() {
   local dir="$1"
   cd "$dir"
-  nohup bash -c 'set -a; source "$1"; set +a; exec "$2/.venv/bin/python" -m gotham.core.orchestra_worker' bash "$ENVFILE" "$dir" \\
+  nohup bash -c 'set -a; source "$1"; set +a; exec "$2/.venv/bin/python" -m gotham.core.orchestra_worker' bash "$ENVFILE" "$dir" \
     </dev/null >>"$BASE/logs/orchestra-worker.log" 2>&1 &
   local pid=$!
-  printf '%s\\n' "$pid" > "$WPIDFILE"
+  printf '%s\n' "$pid" > "$WPIDFILE"
   sleep 1
   kill -0 "$pid" 2>/dev/null || { echo "FAIL: restricted orchestra worker exited" >&2; return 1; }
   echo "PASS: restricted orchestra-only worker started"
