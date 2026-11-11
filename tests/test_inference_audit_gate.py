@@ -44,7 +44,7 @@ def test_transport_audit_commits_metadata_not_prompt(monkeypatch, env):
             return False
 
         def read(self):
-            return b'{"message":{"content":"{\"ok\":true}"}}'
+            return b'{"message":{"content":"ok"}}'
 
     monkeypatch.setattr(audit, "AuditWriter", RecordingAudit)
     monkeypatch.setattr(inference.urllib.request, "urlopen", lambda *a, **k: Reply())
