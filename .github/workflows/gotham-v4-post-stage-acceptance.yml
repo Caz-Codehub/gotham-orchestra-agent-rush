@@ -1,0 +1,64 @@
+name: Gotham 4 post-stage real 12-specialist acceptance
+on:
+  workflow_run:
+    workflows: ["Gotham 4 post-CI auto-stage to Vultr"]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: gotham4-staging-update
+  cancel-in-progress: false
+jobs:
+  accept:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Authenticate approved SSH key and pin Vultr host
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" || { echo "BLOCKED: missing staging secret"; exit 1; }
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os, pathlib, base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('BLOCKED: invalid SSH credential')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1 || { echo "BLOCKED: private key invalid"; exit 1; }
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts || exit 1
+          ACTUAL="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$ACTUAL" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo "BLOCKED: SSH fingerprint mismatch"; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+      - name: Run real Qwen mission via current isolated staging installation
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          STAGE="$HOME/gotham-v4-staging/current"
+          test -L "$STAGE" || { echo "BLOCKED: no active staging release"; exit 2; }
+          SCRIPT="$STAGE/scripts/accept_four_orchestras.sh"
+          test -f "$SCRIPT" || { echo "BLOCKED: acceptance script missing from checked staging release"; exit 2; }
+          bash -n "$SCRIPT"
+          bash "$SCRIPT"
+          REMOTE
+      - name: Report verified synthetic analysis only
+        if: success()
+        run: |
+          echo "PASS: All four captains, twelve specialists, Alfred synthesis and Batman-only Specter audit were checked using real local Qwen inference." >> "$GITHUB_STEP_SUMMARY"
+          echo "This is NOT proof of approved sandbox tool execution or production readiness." >> "$GITHUB_STEP_SUMMARY"
