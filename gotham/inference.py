@@ -79,6 +79,18 @@ class CompatibleInference:
         else:
             request_data.update({'temperature':0.1,'max_tokens':min(2200,max(80,int(max_tokens)))})
             request_timeout = 65
+        # Final mandatory audit gate immediately before transport. This applies
+        # to legacy code paths too, not just the v4 runtime and orchestral DAG.
+        # It records hashes/metadata only; no private auditor identity enters prompts.
+        import hashlib
+        from .core.audit import AuditWriter
+        from .core.config import audit_path
+        AuditWriter(audit_path()).record(
+            None, None, 'InferenceGateway', 'pre_model_transport',
+            {'provider': self.provider_name[:50], 'model': self.model[:80],
+             'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
+             'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
+             'local': local})
         headers = {'Content-Type':'application/json'}
         if self.key: headers['Authorization']='Bearer '+self.key
         req = urllib.request.Request(self.endpoint,json.dumps(request_data).encode(),headers=headers,method='POST')
