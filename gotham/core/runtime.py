@@ -42,6 +42,12 @@ def run_agent(ctx: T.ToolContext, client, role: str, goal: str, *, max_steps: in
     steps = []
     for n in range(1, max_steps + 1):
         user = '\n'.join(transcript)[-12000:]
+        # Commit metadata-only audit receipt BEFORE model inference.
+        import hashlib
+        ctx.record('pre_model_gate', {
+            'step': n, 'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
+            'permitted': True, 'actor': ctx.agent,
+        })
         try:
             reply = client.json(system, user, max_tokens=900)
         except InferenceError as exc:
@@ -61,7 +67,10 @@ def run_agent(ctx: T.ToolContext, client, role: str, goal: str, *, max_steps: in
         except (T.ToolDenied, T.ToolError) as exc:
             blob, ok = f'ERROR: {exc}', False
         if INJECTION.search(blob):
-            ctx.record('prompt_injection_suspected', {'tool': str(name)[:60], 'step': n})
+            ctx.record('prompt_injection_blocked', {'tool': str(name)[:60], 'step': n})
+            # Suspicious untrusted tool text is never forwarded to the model.
+            blob = '[UNTRUSTED TOOL OUTPUT BLOCKED BY POLICY]'
+            ok = False
         steps.append({'tool': name, 'ok': ok})
         transcript.append(f'STEP {n} you called {name}({json.dumps(args)[:300]})\n<tool_result>\n{blob}\n</tool_result>')
     return {'steps': steps, 'final': {'summary': 'step budget exhausted', 'status': 'failed'}, 'model_calls': max_steps,
