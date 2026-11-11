@@ -48,6 +48,17 @@ class CompatibleInference:
     def chat(self, system: str, user: str, *, max_tokens: int=400, json_mode: bool=False) -> str:
         if not self.configured:
             raise InferenceError(self.provider_name + ' model is not configured')
+        from .model_policy import ModelInputDenied, screen
+        from .core.audit import AuditWriter
+        from .core.config import audit_path
+        try:
+            system, user, screening = screen(system, user)
+        except ModelInputDenied as exc:
+            with _TRANSPORT_AUDIT_GATE:
+                AuditWriter(audit_path()).record(None, None, 'InferenceGateway',
+                    'model_input_denied', {'reason': str(exc)[:100],
+                                           'provider': self.provider_name[:50]})
+            raise InferenceError('Model input denied by pre-inference policy') from exc
         with self._lock:
             if self._calls >= self.max_calls:
                 raise InferenceError('Model-call budget exhausted. No further calls issued.')
@@ -84,8 +95,6 @@ class CompatibleInference:
         # to legacy code paths too, not just the v4 runtime and orchestral DAG.
         # It records hashes/metadata only; no private auditor identity enters prompts.
         import hashlib
-        from .core.audit import AuditWriter
-        from .core.config import audit_path
         # Serialize short journal initialization+append: concurrent local
         # completions otherwise race on SQLite journal_mode=WAL setup.
         # Never hold this lock during network inference.
@@ -95,7 +104,7 @@ class CompatibleInference:
                 {'provider': self.provider_name[:50], 'model': self.model[:80],
                  'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
                  'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
-                 'local': local})
+                 'local': local, 'input_screening': screening})
         headers = {'Content-Type':'application/json'}
         if self.key: headers['Authorization']='Bearer '+self.key
         req = urllib.request.Request(self.endpoint,json.dumps(request_data).encode(),headers=headers,method='POST')
