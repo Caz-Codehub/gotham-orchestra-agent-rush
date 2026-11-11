@@ -1,0 +1,32 @@
+name: Gotham 12-specialist orchestral CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/gotham-orchestral-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  orchestral-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/gotham-4-0-execution-8f66gu
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime test packages
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Compile orchestra and engine
+        run: python -m compileall -q gotham
+      - name: Run full twelve-specialist fake-model evidence tests
+        env:
+          GOTHAM_RUN_DOCKER_TESTS: '0'
+        run: |
+          python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py
