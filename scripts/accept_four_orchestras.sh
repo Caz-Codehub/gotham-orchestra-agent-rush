@@ -13,7 +13,7 @@ set +a
 URL="http://127.0.0.1:8001"
 curl -fsS --max-time 5 "$URL/api/v4/health" >/dev/null
 read -r -d '' PAYLOAD <<'JSON' || true
-{"kind":"orchestra","goal":"Produce a bounded, evidence-honest four-domain analysis of synthetic research, code, defensive logs and a disposable training lab without executing untrusted code.","params":{"orchestra":"all","scope":"An owned, offline, disposable cyberdefense training laboratory with synthetic data."},"idempotency_key":"gotham-4-all-orchestra-acceptance-v1"}
+{"kind":"orchestra","goal":"Produce a bounded, evidence-honest four-domain analysis of synthetic research, code, defensive logs and a disposable training lab without executing untrusted code.","params":{"orchestra":"all","scope":"An owned, offline, disposable cyberdefense training laboratory with synthetic data."}}
 JSON
 response="$(curl -fsS --max-time 15 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \
   -H 'Content-Type: application/json' --data "$PAYLOAD" "$URL/api/v4/missions")"
