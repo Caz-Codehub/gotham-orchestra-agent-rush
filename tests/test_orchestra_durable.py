@@ -75,7 +75,7 @@ def test_full_orchestra_durable_mission_and_audit_receipts(env):
     assert all(t["mode"] == "playbook" for t in created)
     run_until_done(engine, concurrency=4)
     state = engine.store.get_mission(mid)
-    assert state["status"] == "completed_unverified", [(t["kind"], t["agent"], t["status"], t["error"]) for t in engine.store.tasks_for(mid)]
+    assert state["status"] == "completed_unverified", {"failed_tasks": [(t["kind"], t["agent"], t["status"], t["error"]) for t in engine.store.tasks_for(mid) if t["status"] != "succeeded"], "bad_checks": [x for x in (state.get("result") or {}).get("checks", []) if not x["pass"]]}
     assert state["result"]["verified"] is False
     assert state["result"]["analysis_complete"] is True
     assert state["result"]["execution_verified"] is False
