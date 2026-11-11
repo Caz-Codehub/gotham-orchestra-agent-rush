@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Rootless, versioned staging deployment on the EXISTING Vultr VM.
+# NEVER touches production gotham.service, /opt/gotham, Caddy or privileged Docker.
+set -Eeuo pipefail
+umask 077
+test "$(id -un)" = gothamdeploy || { echo "Only gothamdeploy may start this staging service"; exit 2; }
+SRC="$(readlink -f "${1:?release source path required}")"
+BASE="$HOME/gotham-v4-staging"
+mkdir -p "$BASE" "$BASE/logs" "$BASE/data" "$BASE/audit"
+test -f "$SRC/gotham/app.py" || { echo "Invalid release directory"; exit 2; }
+test "$SRC" != /opt/gotham || exit 2
+
+# Independent per-release virtualenv. Production packages are never altered.
+python3 -m venv "$SRC/.venv"
+"$SRC/.venv/bin/python" -m pip install -q -r "$SRC/requirements.txt"
+"$SRC/.venv/bin/python" -m compileall -q "$SRC/gotham"
+
+ENVFILE="$BASE/staging.env"
+if [ ! -f "$ENVFILE" ]; then
+  {
+    printf 'GOTHAM_DATA_DIR=%s\n' "$BASE/data"
+    printf 'GOTHAM_STORE_DB=%s\n' "$BASE/data/orchestra.sqlite3"
+    printf 'GOTHAM_AUDIT_DB=%s\n' "$BASE/audit/specter.sqlite3"
+    printf 'GOTHAM_LEDGER_PATH=%s\n' "$BASE/data/legacy.sqlite3"
+    printf 'GOTHAM_SPECTER_DB=%s\n' "$BASE/audit/legacy-specter.sqlite3"
+    printf 'GOTHAM_SPECTER_EXTERNAL=1\n'
+    printf 'GOTHAM_INFERENCE_PROVIDER=ollama\n'
+    printf 'GOTHAM_OLLAMA_MODEL=qwen2.5:1.5b\n'
+    printf 'GOTHAM_MAX_MODEL_CALLS=32\n'
+    printf 'GOTHAM_LOCAL_CONTEXT_TOKENS=2048\n'
+    printf 'GOTHAM_ALLOW_PAID_INFERENCE=NO\n'
+    python3 - <<'PY'
+import secrets
+for role in ("BATMAN", "OPERATOR", "VIEWER"):
+    print("GOTHAM_"+role+"_TOKEN="+secrets.token_urlsafe(42))
+PY
+  } > "$ENVFILE"
+fi
+chmod 600 "$ENVFILE"
+
+PIDFILE="$BASE/staging.pid"
+CURRENT="$BASE/current"
+old_release=""
+old_pid=""
+if [ -L "$CURRENT" ]; then old_release="$(readlink -f "$CURRENT")"; fi
+if [ -f "$PIDFILE" ]; then old_pid="$(cat "$PIDFILE")"; fi
+
+owned_pid() {
+  test -n "$1" && [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null &&
+  test -r "/proc/$1/cmdline" &&
+  tr '\0' ' ' < "/proc/$1/cmdline" | grep -q 'uvicorn gotham.app:app'
+}
+stop_owned() {
+  if owned_pid "$1"; then
+    kill "$1"
+    for i in $(seq 1 25); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
+  fi
+}
+launch_release() {
+  local dir="$1"
+  local pid
+  cd "$dir"
+  nohup bash -c 'set -a; source "$1"; set +a; exec "$2/.venv/bin/python" -m uvicorn gotham.app:app --host 127.0.0.1 --port 8001 --workers 1' bash "$ENVFILE" "$dir" \
+    </dev/null >>"$BASE/logs/staging-api.log" 2>&1 &
+  pid=$!
+  printf '%s\n' "$pid" > "$PIDFILE"
+  for i in $(seq 1 50); do
+    if curl -fsS --max-time 2 http://127.0.0.1:8001/api/v4/health > "$BASE/last-health.json" 2>/dev/null; then
+      if "$dir/.venv/bin/python" -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["status"] == "ok"' "$BASE/last-health.json"; then
+        echo "PASS staging API health"; return 0
+      fi
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then break; fi
+    sleep 0.3
+  done
+  echo "FAIL staging health check" >&2
+  return 1
+}
+
+if [ -n "$old_pid" ] && ! owned_pid "$old_pid"; then
+  echo "BLOCKED: stale or unowned PID; refusing to terminate process" >&2
+  exit 2
+fi
+if [ -z "$old_pid" ] && ss -lnt | grep -q '127[.]0[.]0[.]1:8001[[:space:]]'; then
+  echo "BLOCKED: port 8001 is occupied by an unknown service" >&2
+  exit 2
+fi
+
+if [ -n "$old_pid" ]; then
+  stop_owned "$old_pid"
+fi
+if launch_release "$SRC"; then
+  ln -sfn "$SRC" "$BASE/current.new"
+  mv -Tf "$BASE/current.new" "$CURRENT"
+  echo "PASS rootless staging release activated"
+  if systemctl is-active --quiet gotham.service; then
+    echo "PASS existing Gotham production remains active"
+  else
+    echo "WARN production was not active before/after staging; no production changes made" >&2
+  fi
+  echo "STAGING ONLY: private localhost port 8001; no public routing; no worker service; no paid inference"
+  exit 0
+fi
+
+# Restore previous working staging release if new one failed.
+bad_pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+stop_owned "$bad_pid"
+if [ -n "$old_release" ] && [ -x "$old_release/.venv/bin/python" ]; then
+  echo "Restoring preceding staging API"
+  launch_release "$old_release" || { echo "CRITICAL: staging rollback failed"; exit 1; }
+  ln -sfn "$old_release" "$BASE/current.new"
+  mv -Tf "$BASE/current.new" "$CURRENT"
+fi
+exit 1
