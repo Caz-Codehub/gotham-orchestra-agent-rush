@@ -29,6 +29,11 @@ jobs:
       - name: Install runtime and test dependencies
         run: |
           python -m pip install -q -r requirements.txt -r requirements-dev.txt
+      - name: Provision isolated Semgrep scanner for security-audit acceptance
+        run: |
+          python -m venv .scanners
+          .scanners/bin/python -m pip install -q -r requirements-scanners.txt
+          .scanners/bin/semgrep --version
       - name: Test all non-Docker unit cases
         env:
           GOTHAM_RUN_DOCKER_TESTS: '0'
