@@ -1,8 +1,11 @@
 name: Gotham 4 post-stage real 12-specialist acceptance
 on:
-  workflow_run:
-    workflows: ["Gotham 4 post-CI auto-stage to Vultr"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Enter RUN_SYNTHETIC_12 to check the current isolated staging release"
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -10,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   accept:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ inputs.confirmation == 'RUN_SYNTHETIC_12' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
