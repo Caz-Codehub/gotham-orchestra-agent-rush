@@ -37,6 +37,20 @@ def test_unauthenticated_and_viewer_cannot_submit(client):
     assert client.get('/api/v4/missions', headers=H(V)).status_code == 200
 
 
+def test_orchestras_expose_four_captains_and_twelve_scoped_specialists(client):
+    assert client.get('/api/v4/orchestras').status_code == 401
+    response = client.get('/api/v4/orchestras', headers=H(V))
+    assert response.status_code == 200
+    data = response.json()
+    assert data['supervisor'] == 'Alfred'
+    assert data['captains'] == 4
+    assert data['specialists'] == 12
+    assert len(data['orchestras']) == 4
+    positions = [p['id'] for o in data['orchestras'] for p in o['specialists']]
+    assert len(set(positions)) == 12
+    assert data['execution_state'] == 'not established by roster'
+
+
 def test_audit_endpoints_are_batman_only(client):
     for tok in (O, V):
         assert client.get('/api/v4/audit/verify', headers=H(tok)).status_code == 403
