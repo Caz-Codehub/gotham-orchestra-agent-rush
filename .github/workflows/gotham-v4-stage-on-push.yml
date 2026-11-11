@@ -25,7 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Compile and test before any Vultr change
+      - id: ci_tests
+        name: Compile and test before any Vultr change
         env:
           GOTHAM_RUN_DOCKER_TESTS: '0'
         run: |
@@ -34,7 +35,8 @@ jobs:
           python -m compileall -q gotham
           python -m pip install -q -r requirements.txt -r requirements-dev.txt
           python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py tests/test_v4_agent_runtime.py
-      - name: Configure approved rootless SSH
+      - id: ssh_auth
+        name: Configure approved rootless SSH
         env:
           DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
         run: |
@@ -65,7 +67,8 @@ jobs:
           test "$OBSERVED" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo 'BLOCKED: Vultr fingerprint changed'; exit 1; }
           chmod 600 ~/.ssh/known_hosts
           ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 true
-      - name: Upload checksummed release and update localhost staging
+      - id: staged_release
+        name: Upload checksummed release and update localhost staging
         run: |
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
@@ -87,22 +90,30 @@ jobs:
           REMOTE
           echo "PASS: release $SHA deployed to protected localhost-only staging; production unchanged" >> "$GITHUB_STEP_SUMMARY"
       - name: Publish nonsecret staging deployment receipt
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_OUTCOME: ${{ steps.ci_tests.outcome }}
+          SSH_OUTCOME: ${{ steps.ssh_auth.outcome }}
+          STAGING_OUTCOME: ${{ steps.staged_release.outcome }}
         run: |
           set -euo pipefail
           export STAGED_COMMIT="$(git rev-parse HEAD)"
           python3 - <<'PY'
           import json,os,datetime
+          state = 'staging-healthy' if os.environ.get('STAGING_OUTCOME')=='success' else 'staging-blocked'
           obj={
-            'state':'staging-healthy',
+            'state':state,
+            'ci_tests':os.environ.get('CI_OUTCOME','unknown'),
+            'ssh_auth':os.environ.get('SSH_OUTCOME','unknown'),
+            'staging_deploy':os.environ.get('STAGING_OUTCOME','unknown'),
             'deployed_commit':os.environ['STAGED_COMMIT'],
             'timestamp_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'host':'155.138.194.208',
             'port':'127.0.0.1:8001',
-            'orchestras_defined':4,
-            'specialist_positions_defined':12,
-            'worker':'restricted-orchestra-only',
+            'orchestras_defined':4 if state=='staging-healthy' else None,
+            'specialist_positions_defined':12 if state=='staging-healthy' else None,
+            'worker':'restricted-orchestra-only' if state=='staging-healthy' else 'not verified',
             'production_modified':False,
             'full_execution_verified':False,
             'note':'Automated acceptance checked API health, role roster and worker heartbeat; model missions need separate acceptance.'
@@ -121,4 +132,4 @@ jobs:
               -f message="Record first verified Gotham staging release" -f content="$B64" \
               -f branch="$GITHUB_REF_NAME" >/dev/null
           fi
-          echo "Staging deployment receipt committed; no tokens stored." >> "$GITHUB_STEP_SUMMARY"
+          echo "Staging deployment result (including failures) recorded in repository; no tokens stored." >> "$GITHUB_STEP_SUMMARY"
