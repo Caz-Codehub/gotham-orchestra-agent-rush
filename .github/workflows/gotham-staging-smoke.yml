@@ -1,0 +1,75 @@
+name: Gotham 4 isolated staging smoke
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Enter STAGING_SMOKE to test Gotham 4 on localhost only"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: gotham4-smoke
+  cancel-in-progress: false
+jobs:
+  stage-smoke:
+    if: ${{ inputs.confirmation == 'STAGING_SMOKE' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/gotham-4-0-execution-8f66gu
+          persist-credentials: false
+      - name: Configure validated SSH credential
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          python3 - <<'PY'
+          import os,pathlib,base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  decoded=base64.b64decode(''.join(raw.split()),validate=True).decode('utf-8')
+                  if decoded.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=decoded
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          assert raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n'), 'Invalid deployment key'
+          pathlib.Path.home().joinpath('.ssh/gotham_deploy').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham_deploy
+          ssh-keygen -y -P '' -f ~/.ssh/gotham_deploy >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          EXPECTED=SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024
+          ACTUAL="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$ACTUAL" = "$EXPECTED" || { echo 'BLOCKED: server host fingerprint differs'; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+          ssh -i ~/.ssh/gotham_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes gothamdeploy@155.138.194.208 true
+      - name: Prepare and transfer checked release
+        run: |
+          set -euo pipefail
+          bash -n deploy/staging_smoke_nonroot.sh
+          git archive --format=tar.gz -o gotham-v4-smoke.tar.gz HEAD
+          sha256sum gotham-v4-smoke.tar.gz > gotham-v4-smoke.tar.gz.sha256
+          scp -i ~/.ssh/gotham_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes gotham-v4-smoke.tar.gz gotham-v4-smoke.tar.gz.sha256 gothamdeploy@155.138.194.208:
+      - name: Execute isolated localhost smoke; clean up
+        run: |
+          ssh -i ~/.ssh/gotham_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes gothamdeploy@155.138.194.208 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME"
+          sha256sum -c gotham-v4-smoke.tar.gz.sha256
+          D="$(mktemp -d "$HOME/gotham-smoke.XXXXXXXX")"
+          trap 'rm -rf "$D"; rm -f "$HOME/gotham-v4-smoke.tar.gz" "$HOME/gotham-v4-smoke.tar.gz.sha256"' EXIT
+          tar -xzf gotham-v4-smoke.tar.gz -C "$D" --no-same-owner --no-same-permissions
+          bash "$D/deploy/staging_smoke_nonroot.sh" "$D"
+          REMOTE
+      - name: Confirm production untouched
+        run: echo "PASS — non-root API smoke on localhost 8001; production never redeployed" >> "$GITHUB_STEP_SUMMARY"
