@@ -15,7 +15,6 @@ jobs:
     if: ${{ inputs.confirmation == 'CONNECT_ONLY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: gotham-staging
     steps:
       - name: Verify GitHub to Vultr SSH (no server changes)
         env:
