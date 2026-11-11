@@ -28,7 +28,7 @@ jobs:
           # Normalize common Windows/noVNC copy formatting without showing the secret.
           python3 - <<'PY'
           import os, pathlib, base64
-          raw = os.environ['DEPLOY_KEY'].strip().lstrip('\\ufeff')
+          raw = os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
           if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
               raw = raw.replace('\\n', '\n')
           if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
@@ -38,7 +38,7 @@ jobs:
                       raw = decoded
               except (ValueError, UnicodeError):
                   pass
-          raw = raw.replace('\\r', '').strip() + '\n'
+          raw = raw.replace(chr(13), '').strip() + '\n'
           if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and
                   raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
               print('BLOCKED: GitHub secret is not a complete OpenSSH private key. Replace the secret from the original file.')
