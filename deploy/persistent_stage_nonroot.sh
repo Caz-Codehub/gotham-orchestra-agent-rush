@@ -39,11 +39,14 @@ fi
 chmod 600 "$ENVFILE"
 
 PIDFILE="$BASE/staging.pid"
+WPIDFILE="$BASE/orchestra-worker.pid"
 CURRENT="$BASE/current"
 old_release=""
 old_pid=""
+old_worker_pid=""
 if [ -L "$CURRENT" ]; then old_release="$(readlink -f "$CURRENT")"; fi
 if [ -f "$PIDFILE" ]; then old_pid="$(cat "$PIDFILE")"; fi
+if [ -f "$WPIDFILE" ]; then old_worker_pid="$(cat "$WPIDFILE")"; fi
 
 owned_pid() {
   test -n "$1" && [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null &&
@@ -56,6 +59,29 @@ stop_owned() {
     for i in $(seq 1 25); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
   fi
 }
+owned_worker_pid() {
+  test -n "$1" && [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null &&
+  test -r "/proc/$1/cmdline" &&
+  tr '\\0' ' ' < "/proc/$1/cmdline" | grep -q 'gotham.core.orchestra_worker'
+}
+stop_owned_worker() {
+  if owned_worker_pid "$1"; then
+    kill "$1"
+    for i in $(seq 1 25); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
+  fi
+}
+launch_worker() {
+  local dir="$1"
+  cd "$dir"
+  nohup bash -c 'set -a; source "$1"; set +a; exec "$2/.venv/bin/python" -m gotham.core.orchestra_worker' bash "$ENVFILE" "$dir" \\
+    </dev/null >>"$BASE/logs/orchestra-worker.log" 2>&1 &
+  local pid=$!
+  printf '%s\\n' "$pid" > "$WPIDFILE"
+  sleep 1
+  kill -0 "$pid" 2>/dev/null || { echo "FAIL: restricted orchestra worker exited" >&2; return 1; }
+  echo "PASS: restricted orchestra-only worker started"
+}
+
 launch_release() {
   local dir="$1"
   local pid
@@ -86,10 +112,13 @@ if [ -z "$old_pid" ] && ss -lnt | grep -q '127[.]0[.]0[.]1:8001[[:space:]]'; the
   exit 2
 fi
 
-if [ -n "$old_pid" ]; then
-  stop_owned "$old_pid"
+if [ -n "$old_worker_pid" ] && ! owned_worker_pid "$old_worker_pid"; then
+  echo "BLOCKED: stale/unowned orchestra worker PID" >&2
+  exit 2
 fi
-if launch_release "$SRC"; then
+if [ -n "$old_worker_pid" ]; then stop_owned_worker "$old_worker_pid"; fi
+if [ -n "$old_pid" ]; then stop_owned "$old_pid"; fi
+if launch_release "$SRC" && launch_worker "$SRC"; then
   ln -sfn "$SRC" "$BASE/current.new"
   mv -Tf "$BASE/current.new" "$CURRENT"
   echo "PASS rootless staging release activated"
@@ -98,16 +127,18 @@ if launch_release "$SRC"; then
   else
     echo "WARN production was not active before/after staging; no production changes made" >&2
   fi
-  echo "STAGING ONLY: private localhost port 8001; no public routing; no worker service; no paid inference"
+  echo "STAGING ONLY: private localhost port 8001; orchestra-only worker; no Docker privileges; no public routing or paid inference"
   exit 0
 fi
 
 # Restore previous working staging release if new one failed.
 bad_pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+bad_worker_pid="$(cat "$WPIDFILE" 2>/dev/null || true)"
+stop_owned_worker "$bad_worker_pid"
 stop_owned "$bad_pid"
 if [ -n "$old_release" ] && [ -x "$old_release/.venv/bin/python" ]; then
   echo "Restoring preceding staging API"
-  launch_release "$old_release" || { echo "CRITICAL: staging rollback failed"; exit 1; }
+  launch_release "$old_release" && launch_worker "$old_release" || { echo "CRITICAL: staging rollback failed"; exit 1; }
   ln -sfn "$old_release" "$BASE/current.new"
   mv -Tf "$BASE/current.new" "$CURRENT"
 fi
