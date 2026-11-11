@@ -293,15 +293,29 @@ class Alfred:
         # Model-driven orchestral analysis is never equivalent to executing and
         # verifying code, notebooks or defensive scans; preserve that distinction.
         if m['kind'] == 'orchestra':
-            report['analysis_complete'] = bool(all_ok)
-            report['verified'] = False
-            report['execution_verified'] = False
+            requested = bool((m['params'] or {}).get('execute') is True)
+            expected = 4 if (m['params'] or {}).get('orchestra') == 'all' else 1
+            evidence_tasks = [t for t in tasks if t['kind'] in
+                              ('build_and_verify', 'audit', 'research', 'malware_triage')
+                              and str((t['params'] or {}).get('workdir', '')).startswith('orchestras/')]
+            real_execution_verified = bool(all_ok and requested and len(evidence_tasks) == expected
+                                            and all(t['status'] == 'succeeded' for t in evidence_tasks))
+            report['analysis_complete'] = bool(all_ok and not requested)
+            report['verified'] = real_execution_verified
+            report['execution_verified'] = real_execution_verified
             report['orchestras_completed'] = sorted({
                 (t['params'] or {}).get('orchestra') for t in tasks
                 if t['kind'] == 'orchestra_review' and t['status'] == 'succeeded'
             })
+            report['evidence_tasks'] = [{'agent': t['agent'], 'kind': t['kind'],
+                                         'receipt': (t['result'] or {}).get('receipt')}
+                                        for t in evidence_tasks]
         report['report_sha256'] = _digest({k: v for k, v in report.items() if k != 'finalized_at'})
-        status = ('completed_unverified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed')) if m['kind'] == 'orchestra' else ('verified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed'))
+        if m['kind'] == 'orchestra':
+            status = ('verified' if real_execution_verified else
+                      ('completed_unverified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed')))
+        else:
+            status = 'verified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed')
         self.store.set_mission(mid, status=status, result=report)
         self.audit.record(mid, None, 'Alfred', 'mission_finalized', {'status': status, 'report_sha256': report['report_sha256'],
                                                                      'checks_passed': sum(c['pass'] for c in checks), 'checks_total': len(checks)})
