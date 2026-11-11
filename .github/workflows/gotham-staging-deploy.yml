@@ -21,12 +21,11 @@ jobs:
         env:
           DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
           VERIFIED_HOST_KEYS: ${{ secrets.GOTHAM_STAGING_KNOWN_HOSTS }}
-          HOST: ${{ vars.GOTHAM_STAGING_HOST }}
+          HOST: 155.138.194.208
         run: |
           set -euo pipefail
           test -n "$DEPLOY_KEY" || { echo "BLOCKED: missing GOTHAM_STAGING_SSH_KEY"; exit 1; }
           test -n "$VERIFIED_HOST_KEYS" || { echo "BLOCKED: missing GOTHAM_STAGING_KNOWN_HOSTS"; exit 1; }
-          test -n "$HOST" || { echo "BLOCKED: missing GOTHAM_STAGING_HOST"; exit 1; }
           [[ "$HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/gotham_staging
