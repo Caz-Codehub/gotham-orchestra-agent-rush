@@ -1,0 +1,123 @@
+name: Gotham 4 post-CI auto-stage to Vultr
+on:
+  workflow_run:
+    workflows: ["Gotham quality gates"]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: gotham4-staging-update
+  cancel-in-progress: false
+jobs:
+  test-and-stage:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'claude/gotham-4-0-execution-8f66gu' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: ci_tests
+        name: Compile and test before any Vultr change
+        env:
+          GOTHAM_RUN_DOCKER_TESTS: '0'
+        run: |
+          set -euo pipefail
+          bash -n deploy/persistent_stage_nonroot.sh
+          python -m compileall -q gotham
+          python -m pip install -q -r requirements.txt -r requirements-dev.txt
+          python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py tests/test_v4_agent_runtime.py
+      - id: ssh_auth
+        name: Configure approved rootless SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" || { echo 'BLOCKED: missing staging SSH credential'; exit 1; }
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os, pathlib, base64
+          raw = os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw = raw.replace('\\n', '\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('BLOCKED: incomplete SSH credential')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham > /dev/null 2>&1 || { echo 'BLOCKED: invalid SSH credential'; exit 1; }
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          OBSERVED="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$OBSERVED" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo 'BLOCKED: Vultr fingerprint changed'; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 true
+      - id: staged_release
+        name: Upload checksummed release and update localhost staging
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          git archive --format=tar.gz -o "gotham-v4-$SHA.tar.gz" HEAD
+          sha256sum "gotham-v4-$SHA.tar.gz" > "gotham-v4-$SHA.tar.gz.sha256"
+          sshopts=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12)
+          scp "${sshopts[@]}" "gotham-v4-$SHA.tar.gz" "gotham-v4-$SHA.tar.gz.sha256" gothamdeploy@155.138.194.208:
+          ssh "${sshopts[@]}" gothamdeploy@155.138.194.208 "RELEASE_SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME"
+          sha256sum -c "gotham-v4-$RELEASE_SHA.tar.gz.sha256"
+          TARGET="$HOME/gotham-v4-staging/releases/$RELEASE_SHA"
+          if [ ! -d "$TARGET" ]; then
+            install -d -m 700 "$TARGET"
+            tar -xzf "gotham-v4-$RELEASE_SHA.tar.gz" -C "$TARGET" --no-same-owner --no-same-permissions
+          fi
+          bash "$TARGET/deploy/persistent_stage_nonroot.sh" "$TARGET"
+          rm -f "$HOME/gotham-v4-$RELEASE_SHA.tar.gz" "$HOME/gotham-v4-$RELEASE_SHA.tar.gz.sha256"
+          REMOTE
+          echo "PASS: release $SHA deployed to protected localhost-only staging; production unchanged" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish nonsecret staging receipt
+        if: always()
+        env:
+          CI_OUTCOME: ${{ steps.ci_tests.outcome }}
+          SSH_OUTCOME: ${{ steps.ssh_auth.outcome }}
+          STAGING_OUTCOME: ${{ steps.staged_release.outcome }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'PY'
+          import json,os,datetime
+          state = "staging-healthy" if os.environ.get("STAGING_OUTCOME") == "success" else "staging-blocked"
+          obj = {
+              "state":state,
+              "ci_tests":os.environ.get("CI_OUTCOME","unknown"),
+              "ssh_auth":os.environ.get("SSH_OUTCOME","unknown"),
+              "staging_deploy":os.environ.get("STAGING_OUTCOME","unknown"),
+              "deployed_commit":os.environ.get("SOURCE_SHA"),
+              "timestamp_utc":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "host":"155.138.194.208",
+              "bind":"127.0.0.1:8001",
+              "production_modified":False,
+              "real_orchestra_mission_verified":False,
+              "notes":"Rootless staging health/roster/worker check only; production not promoted."
+          }
+          with open("gotham-staging-receipt.json","w") as out:
+              json.dump(obj,out,indent=2)
+          print("Staging status:",state,"CI:",obj["ci_tests"],"SSH:",obj["ssh_auth"],"install:",obj["staging_deploy"])
+          PY
+      - name: Save staging receipt as a GitHub Actions artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gotham-staging-receipt-${{ github.run_id }}
+          path: gotham-staging-receipt.json
+          retention-days: 30
+          if-no-files-found: warn
