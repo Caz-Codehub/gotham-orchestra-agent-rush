@@ -18,6 +18,7 @@ OLLAMA_ENDPOINT = 'http://127.0.0.1:11434/api/chat'
 # One shared local model, seven roles. Serialize local completions so five workers
 # cannot simultaneously exhaust a low-RAM laptop. Worker planning remains parallel.
 _LOCAL_INFERENCE_GATE = threading.Lock()
+_TRANSPORT_AUDIT_GATE = threading.Lock()
 
 class InferenceError(RuntimeError): pass
 
@@ -85,12 +86,16 @@ class CompatibleInference:
         import hashlib
         from .core.audit import AuditWriter
         from .core.config import audit_path
-        AuditWriter(audit_path()).record(
-            None, None, 'InferenceGateway', 'pre_model_transport',
-            {'provider': self.provider_name[:50], 'model': self.model[:80],
-             'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
-             'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
-             'local': local})
+        # Serialize short journal initialization+append: concurrent local
+        # completions otherwise race on SQLite journal_mode=WAL setup.
+        # Never hold this lock during network inference.
+        with _TRANSPORT_AUDIT_GATE:
+            AuditWriter(audit_path()).record(
+                None, None, 'InferenceGateway', 'pre_model_transport',
+                {'provider': self.provider_name[:50], 'model': self.model[:80],
+                 'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
+                 'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
+                 'local': local})
         headers = {'Content-Type':'application/json'}
         if self.key: headers['Authorization']='Bearer '+self.key
         req = urllib.request.Request(self.endpoint,json.dumps(request_data).encode(),headers=headers,method='POST')
