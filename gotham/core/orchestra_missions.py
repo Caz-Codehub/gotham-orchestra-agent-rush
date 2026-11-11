@@ -81,6 +81,12 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
                      "kind": "orchestra_review", "title": f"{spec['captain']} verifies reports to Alfred",
                      "params": common, "after": positions, "workdir": f"orchestras/{oid}/review",
                      "timeout": 240})
+    plan.append({"key": "alfred:synthesis", "agent": "Alfred",
+                 "kind": "orchestra_synthesis", "title": "Alfred verifies captain reports",
+                 "params": {"goal": goal, "context": context, "scope": scope,
+                            "orchestra": params.get("orchestra")},
+                 "after": [f"{oid}:review" for oid in ids],
+                 "workdir": "orchestras/alfred/synthesis", "timeout": 240})
     return plan
 
 
@@ -118,8 +124,35 @@ def _invoke(ctx, client, actor: str, system: str, payload: dict, *, max_tokens=4
 
 def execute(ctx, params: dict, client) -> dict:
     oid = params["orchestra"]
-    spec = ORCHESTRAS[oid]
     kind = params["_task_kind"]
+    if kind == "orchestra_synthesis":
+        if not getattr(client, "configured", False):
+            raise OrchestraBlocked("No configured model for Alfred")
+        tasks = ctx.store.tasks_for(ctx.mission_id)
+        reviews = [t for t in tasks if t["kind"] == "orchestra_review"]
+        expected = 4 if oid == "all" else 1
+        if len(reviews) != expected or any(t["status"] != "succeeded" for t in reviews):
+            raise OrchestraBlocked("Alfred cannot synthesize incomplete captain reports")
+        evidence = [(t["result"] or {}).get("evidence") or {} for t in reviews]
+        if any(e.get("reports_to") != "Alfred" or e.get("execution") is not False for e in evidence):
+            raise OrchestraBlocked("unverified captain report")
+        out, digest = _invoke(ctx, client, "Alfred", 
+            "You are central Captain Alfred. Summarize verified-as-received captain analyses "
+            "across the authorized orchestras. These are analysis reports only; no code, "
+            "research notebook, scan, or lab execution has been verified. "
+            "Return JSON with summary and limitations, without claiming deployment or execution.",
+            {"goal": params["goal"], "captains": [{"name": e["captain"], 
+              "orchestra": e["orchestra"], "receipt": e["model_sha256"]} for e in evidence]},
+            max_tokens=700)
+        if not isinstance(out.get("summary"), str) or not out["summary"].strip():
+            raise OrchestraBlocked("Alfred summary missing")
+        ctx.record("alfred_aggregated_captain_reports", {"captains": len(reviews),
+                    "summary_sha256": digest, "execution_verified": False})
+        return {"status": "ok", "summary": out["summary"][:1200],
+                "evidence": {"captains": [e["captain"] for e in evidence],
+                             "orchestras": [e["orchestra"] for e in evidence],
+                             "model_sha256": digest, "execution": False}}
+    spec = ORCHESTRAS[oid]
     goal = _safe_input(params["goal"], 2000)
     context = _safe_input(params.get("context", ""), 3000)
     scope = _safe_input(params.get("scope", ""), 800)
