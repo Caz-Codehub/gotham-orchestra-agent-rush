@@ -22,7 +22,7 @@ from .playbooks import PLAYBOOKS
 from .runtime import NoModel
 from .store import Store, TERMINAL
 
-KINDS = ('engineering', 'security_audit', 'log_analysis', 'malware_analysis', 'research', 'lab_validation', 'full_spectrum', 'objective')
+KINDS = ('engineering', 'security_audit', 'log_analysis', 'malware_analysis', 'research', 'lab_validation', 'full_spectrum', 'objective', 'orchestra')
 MAX_FILES_BYTES = 400_000
 
 
@@ -75,6 +75,9 @@ class Alfred:
 
     def _plan(self, kind, goal, p) -> list[dict]:
         files = p.get('files') or {}
+        if kind == 'orchestra':
+            from .orchestra_missions import mission_plan
+            return mission_plan(goal, p)
         if kind == 'engineering':
             return self._plan_engineering(goal, p)
         if kind == 'security_audit':
@@ -206,6 +209,9 @@ class Alfred:
     def _run(self, task, ctx):
         params = dict(task['params'])
         self._seed(ctx, params.pop('files', None))
+        if task['kind'] in ('orchestra_plan', 'orchestra_specialist', 'orchestra_review'):
+            from .orchestra_missions import execute
+            return execute(ctx, {**params, '_task_kind': task['kind']}, self.client)
         if task['mode'] == 'agent':
             from . import runtime
             out = runtime.run_agent(ctx, self.client, task['agent'], params['goal'])
@@ -284,8 +290,18 @@ class Alfred:
                   'artifacts': [{'id': a['id'], 'name': a['name'], 'sha256': a['sha256'], 'size': a['size'], 'producer': a['producer']} for a in arts],
                   'usage': self.store.usage_totals(mid), 'agents_used': sorted({t['agent'] for t in tasks if t['status'] == 'succeeded'}),
                   'finalized_at': time.time()}
+        # Model-driven orchestral analysis is never equivalent to executing and
+        # verifying code, notebooks or defensive scans; preserve that distinction.
+        if m['kind'] == 'orchestra':
+            report['analysis_complete'] = bool(all_ok)
+            report['verified'] = False
+            report['execution_verified'] = False
+            report['orchestras_completed'] = sorted({
+                (t['params'] or {}).get('orchestra') for t in tasks
+                if t['kind'] == 'orchestra_review' and t['status'] == 'succeeded'
+            })
         report['report_sha256'] = _digest({k: v for k, v in report.items() if k != 'finalized_at'})
-        status = 'verified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed')
+        status = ('completed_unverified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed')) if m['kind'] == 'orchestra' else ('verified' if all_ok else ('cancelled' if m['cancel_requested'] else 'failed'))
         self.store.set_mission(mid, status=status, result=report)
         self.audit.record(mid, None, 'Alfred', 'mission_finalized', {'status': status, 'report_sha256': report['report_sha256'],
                                                                      'checks_passed': sum(c['pass'] for c in checks), 'checks_total': len(checks)})
@@ -303,7 +319,11 @@ def verify_tasks(tasks: list[dict]) -> list[dict]:
         if not ok_status:
             continue
         k = t['kind']
-        if k == 'build_and_verify':
+        if k in ('orchestra_plan', 'orchestra_specialist', 'orchestra_review'):
+            out.append({'task': t['id'], 'agent': t['agent'], 'check': 'model_receipt_present_no_execution_claimed',
+                        'pass': bool(ev.get('model_sha256') and len(ev['model_sha256']) == 64
+                                     and ev.get('execution') is False)})
+        elif k == 'build_and_verify':
             out.append({'task': t['id'], 'agent': t['agent'], 'check': 'tests_passed_in_container_and_committed',
                         'pass': bool(ev.get('tests_after', {}).get('ok') and ev['tests_after'].get('container_destroyed') and ev.get('commit'))})
         elif k == 'audit':
