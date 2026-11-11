@@ -31,6 +31,12 @@ echo "Gotham 4.0 staging: preparing separate Python environment"
 python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install -q -r "$SRC/requirements.txt" -r "$SRC/requirements-dev.txt"
 "$VENV/bin/python" -m compileall -q "$SRC/gotham"
+# Sentinel's acceptance tests require Semgrep, intentionally isolated from the API venv.
+if [ ! -x "$SRC/.scanners/bin/semgrep" ]; then
+  python3 -m venv "$SRC/.scanners"
+  "$SRC/.scanners/bin/python" -m pip install -q -r "$SRC/requirements-scanners.txt"
+fi
+"$SRC/.scanners/bin/semgrep" --version
 echo "Running targeted security acceptance checks"
 (
   cd "$SRC"
