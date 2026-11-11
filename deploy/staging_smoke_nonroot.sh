@@ -58,6 +58,17 @@ audit_code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $
   http://127.0.0.1:8001/api/v4/audit/verify)"
 test "$audit_code" = 403 || { echo "FAIL: operator could access Specter audit ($audit_code)"; exit 1; }
 echo "PASS: operator cannot read Specter audit"
+# Topology is a definition check, NOT proof of model-driven orchestra execution.
+curl -fsS http://127.0.0.1:8001/api/orchestras > "$SRC/orchestras.json"
+"$SRC/.venv/bin/python" - "$SRC/orchestras.json" <<'PY'
+import json,sys
+items=json.load(open(sys.argv[1]))['orchestras']
+assert len(items)==4
+assert len({item['captain'] for item in items})==4
+assert sum(len(item['roles']) for item in items)==12
+assert len({(item['id'], role['role']) for item in items for role in item['roles']})==12
+print('PASS: four orchestra definitions, four captains, twelve scoped specialists (topology only)')
+PY
 curl -fsS -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \
   http://127.0.0.1:8001/api/v4/preflight > "$SRC/preflight.json"
 echo "PASS: read-only preflight endpoint responds"
