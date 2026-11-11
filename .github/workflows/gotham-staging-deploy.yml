@@ -1,31 +1,23 @@
-name: Gotham 4 — Deploy STAGING only
+name: Gotham 4 — Verify Vultr staging connection
 on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: "Enter STAGING_ONLY. This never promotes production."
+        description: "Enter CONNECT_ONLY; checks SSH, never deploys or restarts."
         required: true
         type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: gotham-v4-staging-vultr
-  cancel-in-progress: false
-
 jobs:
-  stage:
-    if: ${{ inputs.confirmation == 'STAGING_ONLY' && vars.GOTHAM_STAGING_DEPLOY_ENABLED == 'true' }}
+  connect:
+    if: ${{ inputs.confirmation == 'CONNECT_ONLY' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     environment: gotham-staging
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: claude/gotham-4-0-execution-8f66gu
-          persist-credentials: false
-      - name: Preflight credentials, without exposing values
+      - name: Verify GitHub to Vultr SSH (no server changes)
         env:
           DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
           VERIFIED_HOST_KEYS: ${{ secrets.GOTHAM_STAGING_KNOWN_HOSTS }}
@@ -41,39 +33,5 @@ jobs:
           chmod 600 ~/.ssh/gotham_staging
           printf '%s\n' "$VERIFIED_HOST_KEYS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          ssh-keygen -y -P '' -f ~/.ssh/gotham_staging >/dev/null || { echo "BLOCKED: deployment SSH key is invalid or encrypted"; exit 1; }
-          ssh -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "root@$HOST" 'echo staging-ssh-ok'
-      - name: Package the exact verified source
-        run: |
-          set -euo pipefail
-          bash -n deploy/stage_side_by_side.sh
-          SHA="$(git rev-parse HEAD)"
-          mkdir -p out/source
-          git archive HEAD | tar -xf - -C out/source
-          tar -czf gotham-stage-"$SHA".tar.gz -C out/source .
-          sha256sum gotham-stage-"$SHA".tar.gz > gotham-stage-"$SHA".tar.gz.sha256
-      - name: Upload and activate local-only staging
-        env:
-          HOST: ${{ vars.GOTHAM_STAGING_HOST }}
-        run: |
-          set -euo pipefail
-          SHA="$(git rev-parse HEAD)"
-          SSH=(ssh -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
-          SCP=(scp -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
-          "${SCP[@]}" "gotham-stage-$SHA.tar.gz" "gotham-stage-$SHA.tar.gz.sha256" "root@$HOST:/tmp/"
-          "${SSH[@]}" "root@$HOST" "SHA='$SHA' bash -se" <<'REMOTE'
-          set -Eeuo pipefail
-          cd /tmp
-          sha256sum -c "gotham-stage-$SHA.tar.gz.sha256"
-          RELEASE="/opt/gotham-v4-staging/releases/$SHA"
-          if [ ! -d "$RELEASE" ]; then
-            install -d -m 755 "$RELEASE"
-            tar -xzf "gotham-stage-$SHA.tar.gz" -C "$RELEASE" --no-same-owner --no-same-permissions
-          fi
-          GOTHAM_STAGE_SOURCE="$RELEASE" bash "$RELEASE/deploy/stage_side_by_side.sh"
-          curl -fsS --max-time 3 http://127.0.0.1:8001/api/v4/health
-          test "$(systemctl is-active gotham)" = active
-          echo "PASS staging only; production service still active."
-          REMOTE
-      - name: No production promotion
-        run: echo "Staging installation completed. No production routing or service modified."
+          ssh-keygen -y -P '' -f ~/.ssh/gotham_staging > /dev/null || { echo "BLOCKED: invalid or encrypted SSH key"; exit 1; }
+          ssh -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "gothamdeploy@$HOST" 'printf "PASS: authorized deployment account connected; production unchanged.\n"'
