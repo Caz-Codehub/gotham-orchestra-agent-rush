@@ -67,6 +67,7 @@ def run_agent(ctx: T.ToolContext, client, role: str, goal: str, *, max_steps: in
         except (T.ToolDenied, T.ToolError) as exc:
             blob, ok = f'ERROR: {exc}', False
         if INJECTION.search(blob):
+            ctx.record('prompt_injection_suspected', {'tool': str(name)[:60], 'step': n})
             ctx.record('prompt_injection_blocked', {'tool': str(name)[:60], 'step': n})
             # Suspicious untrusted tool text is never forwarded to the model.
             blob = '[UNTRUSTED TOOL OUTPUT BLOCKED BY POLICY]'
