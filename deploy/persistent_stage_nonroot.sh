@@ -81,6 +81,38 @@ launch_worker() {
   kill -0 "$pid" 2>/dev/null || { echo "FAIL: restricted orchestra worker exited" >&2; return 1; }
   echo "PASS: restricted orchestra-only worker started"
 }
+accept_orchestra() {
+  set -a
+  source "$ENVFILE"
+  set +a
+  curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \\
+    http://127.0.0.1:8001/api/v4/orchestras > "$BASE/last-orchestras.json" || return 1
+  "$SRC/.venv/bin/python" - "$BASE/last-orchestras.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['captains']==4 and d['specialists']==12
+assert len(d['orchestras'])==4
+assert all(len(o['specialists'])==3 and o['reports_to']=='Alfred' for o in d['orchestras'])
+print('PASS four captains and twelve scoped specialist definitions')
+PY
+  for i in $(seq 1 12); do
+    if curl -fsS --max-time 5 -H "Authorization: Bearer $GOTHAM_OPERATOR_TOKEN" \\
+      http://127.0.0.1:8001/api/v4/infra > "$BASE/last-infra.json"; then
+      if "$SRC/.venv/bin/python" - "$BASE/last-infra.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert any(str(w.get('id','')).startswith('orchestra-worker-') for w in d.get('workers',[]))
+PY
+      then
+        echo "PASS orchestral worker appears in the durable store"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "FAIL restricted orchestra worker was not observed by API" >&2
+  return 1
+}
 
 launch_release() {
   local dir="$1"
@@ -118,7 +150,7 @@ if [ -n "$old_worker_pid" ] && ! owned_worker_pid "$old_worker_pid"; then
 fi
 if [ -n "$old_worker_pid" ]; then stop_owned_worker "$old_worker_pid"; fi
 if [ -n "$old_pid" ]; then stop_owned "$old_pid"; fi
-if launch_release "$SRC" && launch_worker "$SRC"; then
+if launch_release "$SRC" && launch_worker "$SRC" && accept_orchestra; then
   ln -sfn "$SRC" "$BASE/current.new"
   mv -Tf "$BASE/current.new" "$CURRENT"
   echo "PASS rootless staging release activated"
