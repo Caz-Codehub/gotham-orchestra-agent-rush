@@ -1,13 +1,6 @@
 name: Gotham 4 auto-update Vultr staging
+# Manual contingency path only; automatic staging is run from main after CI.
 on:
-  push:
-    branches: ['claude/gotham-4-0-execution-8f66gu']
-    paths:
-      - 'gotham/**'
-      - 'deploy/**'
-      - 'tests/**'
-      - 'requirements*.txt'
-      - '.github/workflows/gotham-v4-stage-on-push.yml'
   workflow_dispatch:
 permissions:
   contents: write
