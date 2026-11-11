@@ -191,6 +191,13 @@ def preview(aid: str, p=Depends(auth.require('artifacts:read'))):
             'text': data[:60000].decode('utf-8', 'replace')}
 
 
+@router.get('/orchestras')
+def orchestras(p=Depends(auth.require('missions:read'))):
+    """Four captain chains, twelve scoped specialists and central Alfred (definitions)."""
+    from .orchestra_missions import roster
+    return roster()
+
+
 @router.get('/agents')
 def agents(p=Depends(auth.require('missions:read'))):
     rows, running = alfred().store.agent_activity()
