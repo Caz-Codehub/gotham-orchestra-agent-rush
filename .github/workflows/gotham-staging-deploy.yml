@@ -20,17 +20,26 @@ jobs:
       - name: Verify GitHub to Vultr SSH (no server changes)
         env:
           DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
-          VERIFIED_HOST_KEYS: ${{ secrets.GOTHAM_STAGING_KNOWN_HOSTS }}
           HOST: 155.138.194.208
         run: |
           set -euo pipefail
           test -n "$DEPLOY_KEY" || { echo "BLOCKED: missing GOTHAM_STAGING_SSH_KEY"; exit 1; }
-          test -n "$VERIFIED_HOST_KEYS" || { echo "BLOCKED: missing GOTHAM_STAGING_KNOWN_HOSTS"; exit 1; }
           [[ "$HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/gotham_staging
           chmod 600 ~/.ssh/gotham_staging
-          printf '%s\n' "$VERIFIED_HOST_KEYS" > ~/.ssh/known_hosts
+          # The SHA-256 fingerprint below is transcribed from the owner's Vultr console screenshot.
+          # Fetch the *public* host key and accept it ONLY if its fingerprint matches.
+          EXPECTED_HOST_SHA256='SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024'
+          ssh-keyscan -T 10 -t ed25519 "$HOST" 2>/dev/null > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts || { echo "BLOCKED: could not read server host public key"; exit 1; }
+          ACTUAL_HOST_SHA256="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          if [ "$ACTUAL_HOST_SHA256" != "$EXPECTED_HOST_SHA256" ]; then
+            echo "BLOCKED: host fingerprint does not match owner's Vultr console"
+            echo "Observed fingerprint: $ACTUAL_HOST_SHA256"
+            exit 1
+          fi
           chmod 600 ~/.ssh/known_hosts
+          echo "PASS: verified Vultr ED25519 host fingerprint"
           ssh-keygen -y -P '' -f ~/.ssh/gotham_staging > /dev/null || { echo "BLOCKED: invalid or encrypted SSH key"; exit 1; }
           ssh -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "gothamdeploy@$HOST" 'printf "PASS: authorized deployment account connected; production unchanged.\n"'
