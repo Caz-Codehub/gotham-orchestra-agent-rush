@@ -25,7 +25,26 @@ jobs:
           test -n "$DEPLOY_KEY" || { echo "BLOCKED: missing GOTHAM_STAGING_SSH_KEY"; exit 1; }
           [[ "$HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
           install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/gotham_staging
+          # Normalize common Windows/noVNC copy formatting without showing the secret.
+          python3 - <<'PY'
+          import os, pathlib, base64
+          raw = os.environ['DEPLOY_KEY'].strip().lstrip('\\ufeff')
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw = raw.replace('\\n', '\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  decoded = base64.b64decode(''.join(raw.split()), validate=True).decode('utf-8')
+                  if decoded.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw = decoded
+              except (ValueError, UnicodeError):
+                  pass
+          raw = raw.replace('\\r', '').strip() + '\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and
+                  raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              print('BLOCKED: GitHub secret is not a complete OpenSSH private key. Replace the secret from the original file.')
+              raise SystemExit(1)
+          pathlib.Path.home().joinpath('.ssh/gotham_staging').write_text(raw)
+          PY
           chmod 600 ~/.ssh/gotham_staging
           # The SHA-256 fingerprint below is transcribed from the owner's Vultr console screenshot.
           # Fetch the *public* host key and accept it ONLY if its fingerprint matches.
@@ -40,5 +59,5 @@ jobs:
           fi
           chmod 600 ~/.ssh/known_hosts
           echo "PASS: verified Vultr ED25519 host fingerprint"
-          ssh-keygen -y -P '' -f ~/.ssh/gotham_staging > /dev/null || { echo "BLOCKED: invalid or encrypted SSH key"; exit 1; }
+          ssh-keygen -y -P '' -f ~/.ssh/gotham_staging > /dev/null 2>&1 || { echo "BLOCKED: key format invalid even after newline normalization; replace GOTHAM_STAGING_SSH_KEY with original complete unencrypted key"; exit 1; }
           ssh -i ~/.ssh/gotham_staging -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "gothamdeploy@$HOST" 'printf "PASS: authorized deployment account connected; production unchanged.\n"'
