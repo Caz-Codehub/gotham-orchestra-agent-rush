@@ -81,11 +81,51 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
                      "kind": "orchestra_review", "title": f"{spec['captain']} verifies reports to Alfred",
                      "params": common, "after": positions, "workdir": f"orchestras/{oid}/review",
                      "timeout": 240})
+    # Optional real-execution lane, blocked until Batman grants explicit
+    # per-task high-risk approval and a separately sandbox-authorized worker exists.
+    # No static model reports are treated as execution receipts.
+    exec_mode = params.get("execute", False)
+    if not isinstance(exec_mode, bool):
+        raise ValueError("execute must be a boolean")
+    dependencies = [f"{oid}:review" for oid in ids]
+    if exec_mode:
+        workloads = params.get("workloads")
+        if not isinstance(workloads, dict) or any(
+            oid not in workloads or not isinstance(workloads[oid], dict) for oid in ids
+        ):
+            raise ValueError("execution requires explicit workload object for every selected orchestra")
+        adapters = {
+            "software": ("Forge", "build_and_verify"),
+            "research": ("Oracle", "research"),
+            "defense": ("Sentinel", "audit"),
+            "lab": ("Cipher", "malware_triage"),
+        }
+        dependencies = []
+        for oid in ids:
+            p = workloads[oid]
+            if oid == "software" and not isinstance(p.get("files"), dict):
+                raise ValueError("software execution requires supplied project files")
+            if oid == "research" and not isinstance(p.get("notebook"), (dict, str)) and not isinstance(p.get("files"), dict):
+                raise ValueError("research execution requires a notebook or supplied files")
+            if oid == "defense" and not isinstance(p.get("files"), dict):
+                raise ValueError("defensive scan requires supplied authorized files")
+            if oid == "lab" and not isinstance(p.get("sample"), dict):
+                raise ValueError("isolated lab requires an explicitly supplied inert sample")
+            if oid == "lab" and p.get("dynamic"):
+                raise ValueError("dynamic malware behavior needs a separate scope-specific mission")
+            agent, task_kind = adapters[oid]
+            key = f"{oid}:evidence"
+            plan.append({"key": key, "agent": agent, "kind": task_kind,
+                         "title": f"Approved sandbox evidence for {oid}",
+                         "params": p, "after": [f"{oid}:review"],
+                         "risk": "high", "scope": scope or "approved local sandbox only",
+                         "workdir": f"orchestras/{oid}/evidence", "timeout": 900})
+            dependencies.append(key)
     plan.append({"key": "alfred:synthesis", "agent": "Alfred",
                  "kind": "orchestra_synthesis", "title": "Alfred verifies captain reports",
                  "params": {"goal": goal, "context": context, "scope": scope,
-                            "orchestra": params.get("orchestra")},
-                 "after": [f"{oid}:review" for oid in ids],
+                            "orchestra": params.get("orchestra"), "execute": exec_mode},
+                 "after": dependencies,
                  "workdir": "orchestras/alfred/synthesis", "timeout": 240})
     return plan
 
