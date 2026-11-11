@@ -176,22 +176,42 @@ def execute(ctx, params: dict, client) -> dict:
         evidence = [(t["result"] or {}).get("evidence") or {} for t in reviews]
         if any(e.get("reports_to") != "Alfred" or e.get("execution") is not False for e in evidence):
             raise OrchestraBlocked("unverified captain report")
+        execution_evidence = []
+        if params.get("execute"):
+            expected_execution = 4 if oid == "all" else 1
+            for task in tasks:
+                if task["kind"] not in ("build_and_verify", "audit", "research", "malware_triage"):
+                    continue
+                if not str((task["params"] or {}).get("workdir", "")).startswith("orchestras/"):
+                    continue
+                if task["status"] != "succeeded":
+                    raise OrchestraBlocked("approved execution has not succeeded")
+                receipt = (task["result"] or {}).get("receipt")
+                if not receipt:
+                    raise OrchestraBlocked("approved execution is missing a tool receipt")
+                execution_evidence.append({"tool_kind": task["kind"],
+                                           "agent": task["agent"],
+                                           "receipt_sha256": _digest(receipt)})
+            if len(execution_evidence) != expected_execution:
+                raise OrchestraBlocked("missing expected approved evidence tasks")
         out, digest = _invoke(ctx, client, "Alfred", 
-            "You are central Captain Alfred. Summarize verified-as-received captain analyses "
-            "across the authorized orchestras. These are analysis reports only; no code, "
-            "research notebook, scan, or lab execution has been verified. "
-            "Return JSON with summary and limitations, without claiming deployment or execution.",
-            {"goal": params["goal"], "captains": [{"name": e["captain"], 
-              "orchestra": e["orchestra"], "receipt": e["model_sha256"]} for e in evidence]},
+            "You are central Captain Alfred. Synthesize captain analyses and only the "
+            "provided tool receipts, if any. Reports without execution receipts are "
+            "analysis-only. Never claim deployment or unrestricted tool execution. "
+            "Return JSON with summary and limitations.",
+            {"goal": params["goal"], "captains": [{"name": e["captain"],
+              "orchestra": e["orchestra"], "receipt": e["model_sha256"]} for e in evidence],
+             "approved_tool_receipts": execution_evidence},
             max_tokens=700)
         if not isinstance(out.get("summary"), str) or not out["summary"].strip():
             raise OrchestraBlocked("Alfred summary missing")
         ctx.record("alfred_aggregated_captain_reports", {"captains": len(reviews),
-                    "summary_sha256": digest, "execution_verified": False})
+                    "summary_sha256": digest, "execution_receipts": len(execution_evidence)})
         return {"status": "ok", "summary": out["summary"][:1200],
                 "evidence": {"captains": [e["captain"] for e in evidence],
                              "orchestras": [e["orchestra"] for e in evidence],
-                             "model_sha256": digest, "execution": False}}
+                             "model_sha256": digest, "execution": False,
+                             "execution_receipts": execution_evidence}}
     spec = ORCHESTRAS[oid]
     goal = _safe_input(params["goal"], 2000)
     context = _safe_input(params.get("context", ""), 3000)
