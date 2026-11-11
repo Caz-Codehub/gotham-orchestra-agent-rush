@@ -78,6 +78,8 @@ def run_orchestra(orchestra, goal, context='', scope='',*,client=None, telemetry
         It does NOT replace the full classified-input and policy layers specified
         in docs/GOTHAM_12_AGENT_ARCHITECTURE_CONTRACT.md.
         """
+        if telemetry is None:
+            raise OrchestraError('Independent pre-inference audit sink is required')
         record(actor, 'pre_inference_audit_committed')
         response = client.json(system_prompt, user_prompt, max_tokens=max_tokens)
         record(actor, 'model_response_received', source=client.provider_name)
