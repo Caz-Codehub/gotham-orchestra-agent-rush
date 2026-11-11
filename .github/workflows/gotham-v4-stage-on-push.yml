@@ -10,7 +10,7 @@ on:
       - '.github/workflows/gotham-v4-stage-on-push.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: gotham4-staging-update
   cancel-in-progress: false
@@ -86,3 +86,39 @@ jobs:
           rm -f "$HOME/gotham-v4-$RELEASE_SHA.tar.gz" "$HOME/gotham-v4-$RELEASE_SHA.tar.gz.sha256"
           REMOTE
           echo "PASS: release $SHA deployed to protected localhost-only staging; production unchanged" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish nonsecret staging deployment receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export STAGED_COMMIT="$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import json,os,datetime
+          obj={
+            'state':'staging-healthy',
+            'deployed_commit':os.environ['STAGED_COMMIT'],
+            'timestamp_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'host':'155.138.194.208',
+            'port':'127.0.0.1:8001',
+            'orchestras_defined':4,
+            'specialist_positions_defined':12,
+            'worker':'restricted-orchestra-only',
+            'production_modified':False,
+            'full_execution_verified':False,
+            'note':'Automated acceptance checked API health, role roster and worker heartbeat; model missions need separate acceptance.'
+          }
+          open('/tmp/gotham-stage-receipt.json','w').write(json.dumps(obj,indent=2)+'\n')
+          PY
+          B64="$(base64 -w0 /tmp/gotham-stage-receipt.json)"
+          PATH_IN_REPO="deployments/staging-status.json"
+          EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO?ref=$GITHUB_REF_NAME" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$EXISTING" ]; then
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO" \
+              -f message="Record verified Gotham staging release" -f content="$B64" \
+              -f branch="$GITHUB_REF_NAME" -f sha="$EXISTING" >/dev/null
+          else
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO" \
+              -f message="Record first verified Gotham staging release" -f content="$B64" \
+              -f branch="$GITHUB_REF_NAME" >/dev/null
+          fi
+          echo "Staging deployment receipt committed; no tokens stored." >> "$GITHUB_STEP_SUMMARY"
