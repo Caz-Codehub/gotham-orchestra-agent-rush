@@ -117,4 +117,10 @@ else
   echo "WARN existing Gotham production service inactive; no production changes were made"
 fi
 echo "STAGING_ONLY: No public routing, no worker, no paid inference, no production cutover."
-echo "Release SHA: $(git -C "$SRC" rev-parse --short HEAD)"
+if [ -f "$SRC/SOURCE_COMMIT.txt" ]; then
+  echo "Release SHA: $(cat "$SRC/SOURCE_COMMIT.txt")"
+elif [ -d "$SRC/.git" ]; then
+  echo "Release SHA: $(git -C "$SRC" rev-parse HEAD)"
+else
+  echo "Release SHA: unknown (git metadata not bundled)"
+fi
