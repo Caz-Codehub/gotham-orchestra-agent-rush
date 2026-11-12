@@ -296,7 +296,7 @@ class Alfred:
             requested = bool((m['params'] or {}).get('execute') is True)
             expected = 4 if (m['params'] or {}).get('orchestra') == 'all' else 1
             evidence_tasks = [t for t in tasks if t['kind'] in
-                              ('build_and_verify', 'audit', 'research', 'malware_triage')
+                              ('build_and_verify', 'audit', 'research', 'lab_validation')
                               and str((t['params'] or {}).get('workdir', '')).startswith('orchestras/')]
             real_execution_verified = bool(all_ok and requested and len(evidence_tasks) == expected
                                             and all(t['status'] == 'succeeded' for t in evidence_tasks))
