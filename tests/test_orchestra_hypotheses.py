@@ -18,8 +18,8 @@ SCOPE = "Owned, offline disposable cyberdefense exercise in isolated test contai
 WORKLOADS = {
     "software": {"files": {"main.py": "def add(a,b): return a+b\n",
                             "test_main.py": "from main import add\ndef test_add(): assert add(2,3)==5\n"}},
-    "research": {"name": "experiment.ipynb", "cells": [
-        {"cell_type": "code", "source": "assert 1 + 1 == 2"}]},
+    "research": {"name": "experiment", "cells": [
+        {"type": "code", "source": "assert 1 + 1 == 2"}]},
     "defense": {"files": {"safe.py": "print('test')\n"}},
     "lab": {"secure": True, "expect_vulnerable": []},
 }
@@ -64,6 +64,8 @@ def test_h0_each_orchestra_has_registered_executable_playbook_and_approval(domai
     ("software", {"files": {"main.py": 123}}),
     ("research", {"notebook": "fake.ipynb"}),
     ("research", {"name": "fake.ipynb", "cells": []}),
+    ("research", {"name": "fake.ipynb", "cells": [{"type":"code","source":"print(1)"}]}),
+    ("research", {"name": "fake", "cells": [{"cell_type":"code","source":"print(1)"}]}),
     ("defense", {"files": {}}),
     ("lab", {"sample": {"name": "suspicious.exe", "content": "x"}}),
     ("lab", {"secure": "yes"}),
