@@ -54,6 +54,19 @@ usermod -a -G gotham-specter-record gothamworker
 usermod -a -G gotham-specter-verify gothambatmanapi
 
 BASE=/var/lib/gotham-v4-canary
+# Fail before any path creation if a previously provisioned canary path
+# is a symlink/non-directory. Never follow it into a production tree.
+for candidate in "$BASE" "$BASE/specter" "$BASE/specter/journal" \
+                 "$BASE/specter/record" "$BASE/specter/verify" "$BASE/sandbox"; do
+  if [[ -L "$candidate" || ( -e "$candidate" && ! -d "$candidate" ) ]]; then
+    echo "BLOCKED: unexpected canary path type: $candidate" >&2
+    exit 2
+  fi
+done
+if [[ -d "$BASE" && "$(stat -c '%U' "$BASE")" != root ]]; then
+  echo "BLOCKED: existing canary root directory not owned by root" >&2
+  exit 2
+fi
 # Only dedicated paths are created; never modify the existing /opt/gotham
 # tree, Caddy, production unit, staging release or Docker daemon.
 install -d -o root -g root -m 0711 "$BASE"
