@@ -29,6 +29,15 @@ SCOPED_AGENTS = frozenset(
                      + [p['id'] for p in orchestra['specialists']])
     ]
 )
+ALLOWED_PAIRS = frozenset(
+    [('Alfred', 'orchestra_synthesis')]
+    + [(f"{o['id']}:captain", kind)
+       for o in roster()['orchestras']
+       for kind in ('orchestra_plan', 'orchestra_review')]
+    + [(p['id'], 'orchestra_specialist')
+       for o in roster()['orchestras']
+       for p in o['specialists']]
+)
 
 
 def run(stop: threading.Event | None = None, *, once=False, poll=0.5, engine=None, client_factory=None):
@@ -47,7 +56,8 @@ def run(stop: threading.Event | None = None, *, once=False, poll=0.5, engine=Non
     last_recover = 0.0
     while not stop.is_set():
         engine.store.worker_seen(wid, os.getpid(), 1)
-        task = engine.store.claim_next(wid, config.LEASE_SECONDS, agents=SCOPED_AGENTS)
+        task = engine.store.claim_next(wid, config.LEASE_SECONDS,
+                                     allowed_pairs=ALLOWED_PAIRS, mission_kinds={'orchestra'})
         if task:
             if task['kind'] not in ALLOWED_KINDS:
                 engine.audit.record(task['mission_id'], task['id'], 'Alfred',
