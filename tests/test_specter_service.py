@@ -77,3 +77,14 @@ def test_service_refuses_group_readable_private_audit_key(monkeypatch, tmp_path,
         main(_args(tmp_path, os.getuid() + 10001, os.getuid() + 10002))
     assert err.value.code == 2
     assert "must not be group/world readable" in capsys.readouterr().err
+
+
+def test_service_requires_setgid_socket_directories(monkeypatch, tmp_path, capsys):
+    if os.getuid() == 0:
+        pytest.skip("directory owner test runs as non-root")
+    for name in ("record", "verify", "audit"):
+        (tmp_path / name).mkdir(mode=0o700)
+    with pytest.raises(SystemExit) as err:
+        main(_args(tmp_path, os.getuid() + 10001, os.getuid() + 10002))
+    assert err.value.code == 2
+    assert "setgid" in capsys.readouterr().err
