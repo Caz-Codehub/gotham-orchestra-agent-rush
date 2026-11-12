@@ -98,21 +98,30 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
             "software": ("Forge", "build_and_verify"),
             "research": ("Oracle", "research"),
             "defense": ("Sentinel", "audit"),
-            "lab": ("Cipher", "malware_triage"),
+            "lab": ("Cipher", "lab_validation"),
         }
         dependencies = []
         for oid in ids:
             p = workloads[oid]
-            if oid == "software" and not isinstance(p.get("files"), dict):
-                raise ValueError("software execution requires supplied project files")
-            if oid == "research" and not isinstance(p.get("notebook"), (dict, str)) and not isinstance(p.get("files"), dict):
-                raise ValueError("research execution requires a notebook or supplied files")
-            if oid == "defense" and not isinstance(p.get("files"), dict):
-                raise ValueError("defensive scan requires supplied authorized files")
-            if oid == "lab" and not isinstance(p.get("sample"), dict):
-                raise ValueError("isolated lab requires an explicitly supplied inert sample")
-            if oid == "lab" and p.get("dynamic"):
-                raise ValueError("dynamic malware behavior needs a separate scope-specific mission")
+            if oid == "software" and (
+                not isinstance(p.get("files"), dict) or not p["files"]
+                or not all(isinstance(k, str) and isinstance(v, str) for k,v in p["files"].items())
+            ):
+                raise ValueError("software execution requires nonempty source/test files")
+            if oid == "research" and (
+                not isinstance(p.get("name"), str) or not p["name"].endswith(".ipynb")
+                or not isinstance(p.get("cells"), list) or not p["cells"]
+            ):
+                raise ValueError("research execution requires notebook name (.ipynb) and nonempty cells")
+            if oid == "defense" and (
+                not isinstance(p.get("files"), dict) or not p["files"]
+            ):
+                raise ValueError("defensive scan requires nonempty authorized source files")
+            if oid == "lab":
+                if p.get("dynamic") or p.get("sample"):
+                    raise ValueError("lab_validation uses only an isolated lab, not malware samples or dynamic payloads")
+                if not isinstance(p.get("secure"), bool):
+                    raise ValueError("lab execution requires explicit secure=true/false scoped lab fixture")
             agent, task_kind = adapters[oid]
             key = f"{oid}:evidence"
             plan.append({"key": key, "agent": agent, "kind": task_kind,
@@ -180,7 +189,7 @@ def execute(ctx, params: dict, client) -> dict:
         if params.get("execute"):
             expected_execution = 4 if oid == "all" else 1
             for task in tasks:
-                if task["kind"] not in ("build_and_verify", "audit", "research", "malware_triage"):
+                if task["kind"] not in ("build_and_verify", "audit", "research", "lab_validation"):
                     continue
                 if not str((task["params"] or {}).get("workdir", "")).startswith("orchestras/"):
                     continue
