@@ -127,10 +127,16 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
                     raise ValueError("lab execution requires explicit secure=true/false scoped lab fixture")
             agent, task_kind = adapters[oid]
             key = f"{oid}:evidence"
+            # An explicitly approved high-risk task can grant only a declared
+            # allowlist of tools. The scoped lab requires all three operations;
+            # without this list its internal approval prompts deadlock the
+            # evidence stage after Batman's task-start approval.
+            approved_tools = ["lab_start", "lab_probe", "lab_stop"] if oid == "lab" else []
             plan.append({"key": key, "agent": agent, "kind": task_kind,
                          "title": f"Approved sandbox evidence for {oid}",
                          "params": p, "after": [f"{oid}:review"],
-                         "risk": "high", "scope": scope or "approved local sandbox only",
+                         "risk": "high", "tools": approved_tools,
+                         "scope": scope or "approved local sandbox only",
                          "workdir": f"orchestras/{oid}/evidence", "timeout": 900})
             dependencies.append(key)
     plan.append({"key": "alfred:synthesis", "agent": "Alfred",
