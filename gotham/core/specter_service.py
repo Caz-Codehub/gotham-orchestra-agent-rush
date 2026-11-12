@@ -34,6 +34,8 @@ def main(argv=None):
         ap.error("invalid peer UID")
     if os.environ.get("GOTHAM_SPECTER_RECORD_SOCKET") or os.environ.get("GOTHAM_SPECTER_VERIFY_SOCKET"):
         ap.error("service must hold local journal, never connect back through an audit client")
+    if os.environ.get("GOTHAM_AUDIT_KEY"):
+        ap.error("auditor must use its private keyfile, not an inherited environment secret")
     journal = Path(args.journal)
     record = Path(args.record_socket)
     verify = Path(args.verify_socket)
