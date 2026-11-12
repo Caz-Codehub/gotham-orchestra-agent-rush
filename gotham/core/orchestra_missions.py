@@ -68,7 +68,7 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
         common = {"orchestra": oid, "goal": goal, "context": context, "scope": scope}
         plan.append({"key": captain_id, "agent": captain_id,
                      "kind": "orchestra_plan", "title": f"{spec['captain']} delegates",
-                     "params": common, "workdir": f"orchestras/{oid}/captain", "timeout": 240})
+                     "params": common, "workdir": f"orchestras/{oid}/captain", "timeout": 360})
         positions = []
         for actor, role, focus in spec["roles"]:
             key = f"{oid}:{role}"
@@ -76,11 +76,11 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
             plan.append({"key": key, "agent": key, "kind": "orchestra_specialist",
                          "title": f"{role}: {focus}", "params": {**common, "role": role, "focus": focus,
                          "legacy_tool_role": actor}, "after": [captain_id],
-                         "workdir": f"orchestras/{oid}/{actor}-{role.replace(' ', '_')}", "timeout": 240})
+                         "workdir": f"orchestras/{oid}/{actor}-{role.replace(' ', '_')}", "timeout": 420})
         plan.append({"key": f"{oid}:review", "agent": captain_id,
                      "kind": "orchestra_review", "title": f"{spec['captain']} verifies reports to Alfred",
                      "params": common, "after": positions, "workdir": f"orchestras/{oid}/review",
-                     "timeout": 240})
+                     "timeout": 360})
     # Optional real-execution lane, blocked until Batman grants explicit
     # per-task high-risk approval and a separately sandbox-authorized worker exists.
     # No static model reports are treated as execution receipts.
@@ -138,7 +138,7 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
                  "params": {"goal": goal, "context": context, "scope": scope,
                             "orchestra": params.get("orchestra"), "execute": exec_mode},
                  "after": dependencies,
-                 "workdir": "orchestras/alfred/synthesis", "timeout": 240})
+                 "workdir": "orchestras/alfred/synthesis", "timeout": 360})
     return plan
 
 
