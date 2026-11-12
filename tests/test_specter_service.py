@@ -51,3 +51,29 @@ def test_service_refuses_inherited_audit_secret(monkeypatch, tmp_path):
         main(_args(tmp_path, 1001, 1002))
     assert error.value.code == 2
     assert not (tmp_path / "audit").exists()
+
+
+def test_service_refuses_world_accessible_audit_socket_directory(monkeypatch, tmp_path, capsys):
+    if os.getuid() == 0:
+        pytest.skip("directory-ownership test runs as non-root")
+    for name in ("record", "verify", "audit"):
+        (tmp_path / name).mkdir(mode=0o700)
+    (tmp_path / "record").chmod(0o777)
+    with pytest.raises(SystemExit) as err:
+        main(_args(tmp_path, os.getuid() + 10001, os.getuid() + 10002))
+    assert err.value.code == 2
+    assert "deny access to other users" in capsys.readouterr().err
+
+
+def test_service_refuses_group_readable_private_audit_key(monkeypatch, tmp_path, capsys):
+    if os.getuid() == 0:
+        pytest.skip("directory-ownership test runs as non-root")
+    for name in ("record", "verify", "audit"):
+        (tmp_path / name).mkdir(mode=0o700)
+    key = tmp_path / "audit" / "specter.key"
+    key.write_text("fake-test-only-key", encoding="utf-8")
+    key.chmod(0o640)
+    with pytest.raises(SystemExit) as err:
+        main(_args(tmp_path, os.getuid() + 10001, os.getuid() + 10002))
+    assert err.value.code == 2
+    assert "must not be group/world readable" in capsys.readouterr().err
