@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import pwd
 import signal
-import sys
 import threading
 from pathlib import Path
 
@@ -44,8 +42,12 @@ def main(argv=None):
     if not all(p.parent.is_dir() for p in (record, verify, journal)):
         ap.error("all socket and journal directories must be provisioned by the administrator")
     for p in (record.parent, verify.parent, journal.parent):
+        if p.is_symlink():
+            ap.error("Specter IPC and journal directories cannot be symbolic links")
         if p.stat().st_uid != os.geteuid():
             ap.error("each private Specter directory must be owned by the auditor service UID")
+    if journal.is_symlink() or journal.with_suffix(".key").is_symlink():
+        ap.error("Specter journal and key must not be symbolic links")
     if journal.exists() and journal.stat().st_uid != os.geteuid():
         ap.error("private journal must be owned by Specter")
     if journal.with_suffix(".key").exists() and journal.with_suffix(".key").stat().st_uid != os.geteuid():
@@ -72,10 +74,12 @@ def main(argv=None):
         stop.wait()
     finally:
         if ver:
-            ver.shutdown() if threads else None
+            if len(threads) == 2 and threads[1].is_alive():
+                ver.shutdown()
             ver.server_close()
         if rec:
-            rec.shutdown() if threads else None
+            if threads and threads[0].is_alive():
+                rec.shutdown()
             rec.server_close()
         for thread in threads:
             thread.join(timeout=3)
