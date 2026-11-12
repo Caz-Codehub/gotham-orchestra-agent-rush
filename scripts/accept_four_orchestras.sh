@@ -52,6 +52,25 @@ print("PASS: all 12 specialist slots, 4 captain plans/reviews, Alfred synthesis"
 print("PASS: analysis is labeled unverified, not imaginary tool execution")
 '
 audit="$(curl -fsS --max-time 15 -H "Authorization: Bearer $GOTHAM_BATMAN_TOKEN" "$URL/api/v4/audit/verify")"
-printf '%s' "$audit" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] is True; print("PASS: Batman-only Specter hash-chain verified")'
+# An off-host immutable run artifact can anchor a known-good journal head.
+# Never copy the HMAC key, full event bodies or mission inputs into Actions.
+printf '%s' "$audit" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] is True; assert len(d["head"])==64; print("PASS: Batman-only Specter hash-chain verified")'
+printf '%s' "$audit" | python3 -c '
+import json,sys,datetime
+d=json.load(sys.stdin)
+anchor={
+    "schema":"gotham-specter-audit-anchor-v1",
+    "mission_id":sys.argv[1],
+    "head_hmac_sha256":d["head"],
+    "verified_events":d["checked"],
+    "chain_valid":d["valid"],
+    "created_utc":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "purpose":"Off-host checkpoint of isolated staging audit chain; no private key or prompts"
+}
+with open(sys.argv[2],"w") as f:
+    json.dump(anchor,f,sort_keys=True,indent=2)
+    f.write("\\n")
+' "$mid" "$BASE/acceptance-audit-anchor.json"
+chmod 600 "$BASE/acceptance-audit-anchor.json"
 test "$(systemctl is-active gotham)" = active
 echo "PASS: original Gotham production service still active"
