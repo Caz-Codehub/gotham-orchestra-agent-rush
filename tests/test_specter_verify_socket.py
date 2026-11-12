@@ -80,3 +80,31 @@ def test_missing_private_journal_is_never_reported_healthy(tmp_path):
         SpecterVerifyServer(tmp_path / "verify.sock",
                             tmp_path / "journal" / "does-not-exist.sqlite3",
                             allowed_uids={os.getuid()})
+
+
+def test_batman_can_page_scoped_events_and_get_mission_report(verifier):
+    writer, reader, _, _ = verifier
+    mid = "a" * 32
+    for i in range(5):
+        writer.record(mid, f"task-{i}", "Alfred", "task_started", {"ordinal": i})
+    page1 = reader.events(mid, limit=2)
+    assert len(page1) == 2
+    assert all(e["mission_id"] == mid for e in page1)
+    page2 = reader.events(mid, limit=2, after_seq=page1[-1]["seq"])
+    assert len(page2) == 2
+    assert [e["seq"] for e in page1 + page2] == sorted(e["seq"] for e in page1 + page2)
+    report = reader.report(mid)
+    assert report["mission_id"] == mid
+    assert report["integrity"]["valid"] is True
+    assert report["event_count"] == 5
+    assert report["actors"] == ["Alfred"]
+
+
+def test_reader_rejects_missing_or_invalid_mission_scope(verifier):
+    _, reader, _, _ = verifier
+    with pytest.raises(SpecterTransportError, match="invalid mission"):
+        reader.report("../private")
+    with pytest.raises(SpecterTransportError, match="invalid mission"):
+        reader.events("../private")
+    with pytest.raises(SpecterTransportError, match="invalid event page"):
+        reader.events("a" * 32, limit=1001)
