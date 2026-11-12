@@ -6,6 +6,8 @@ work remains blocked until a separately authorized sandbox worker is deployed.
 """
 from __future__ import annotations
 import os
+import fcntl
+from pathlib import Path
 import signal
 import threading
 import time
@@ -82,10 +84,22 @@ def run(stop: threading.Event | None = None, *, once=False, poll=0.5, engine=Non
 
 
 def main():
+    # Single-worker ownership is protected by an OS flock, not just a PID file.
+    # File descriptors are held until process exit, including SIGKILL.
+    lock_path = config.data_dir() / "orchestra-worker.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise SystemExit("BLOCKED: another orchestra worker owns the data store")
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    run(stop)
+    try:
+        run(stop)
+    finally:
+        os.close(fd)
 
 
 if __name__ == '__main__':
