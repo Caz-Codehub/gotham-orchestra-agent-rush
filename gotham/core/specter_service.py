@@ -56,6 +56,8 @@ def main(argv=None):
             ap.error("Specter journal directory must be private to auditor UID (mode 0700)")
         if p != journal.parent and mode & 0o027:
             ap.error("Specter socket directories may grant group-only connect but not group writes")
+        if p != journal.parent and not (p.stat().st_mode & stat.S_ISGID):
+            ap.error("Specter socket directories must be setgid for the approved peer group")
     if journal.is_symlink() or journal.with_suffix(".key").is_symlink():
         ap.error("Specter journal and key must not be symbolic links")
     for private_file in (journal, journal.with_suffix(".key")):
