@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import auth, config, preflight, sbx
 from . import tools as T
-from .audit import AuditReader
+from .audit import AuditReader, audit_reader
 from .engine import KINDS, Alfred
 from .store import Store
 from ..inference import get_inference_client
@@ -38,10 +38,10 @@ def alfred() -> Alfred:
     return _alfred
 
 
-def reader() -> AuditReader:
+def reader():
     global _reader
     if _reader is None:
-        _reader = AuditReader(config.audit_path())
+        _reader = audit_reader(config.audit_path())
     return _reader
 
 
