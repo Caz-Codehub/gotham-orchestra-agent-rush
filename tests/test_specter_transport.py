@@ -97,3 +97,16 @@ def test_auditor_write_failure_refuses_acknowledgment(sidecar):
     with pytest.raises(SpecterTransportError, match="refused"):
         client.record(None, None, "Alfred", "pre_model_gate", {"hash": "b" * 64})
     assert AuditReader(journal).verify()["checked"] == 0
+
+
+@pytest.mark.parametrize("sensitive", [
+    {"raw_prompt": "do not persist this content"},
+    {"nested": [{"authorization": "Bearer synthetic-credential"}]},
+    {"system_prompt": "You are a specialist with private instructions"},
+    {"api_key": "sk-proj-synthetic-do-not-log"},
+])
+def test_auditor_rejects_raw_prompts_and_credentials_before_journaling(sidecar, sensitive):
+    _, client, journal = sidecar
+    with pytest.raises(SpecterTransportError, match="disallowed"):
+        client.record("mission", "task", "Alfred", "pre_model_gate", sensitive)
+    assert AuditReader(journal).verify()["checked"] == 0
