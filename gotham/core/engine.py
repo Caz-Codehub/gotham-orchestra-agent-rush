@@ -30,6 +30,41 @@ def _digest(obj) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def verify_artifact_integrity(artifacts: list[dict], root: Path) -> list[dict]:
+    """Independently rehash emitted files; never trust artifact metadata alone.
+
+    Host-side files must stay within the mission workspace. Existing receipts
+    remain valid only while their actual content and recorded size match.
+    """
+    root = root.resolve()
+    checks = []
+    for a in artifacts:
+        passed = False
+        reason = "missing_or_unreadable"
+        try:
+            path = Path(a["path"])
+            actual = path.resolve(strict=True)
+            if actual != root and root not in actual.parents:
+                reason = "outside_mission_workspace"
+            elif not actual.is_file() or path.is_symlink():
+                reason = "not_regular_file"
+            else:
+                h = hashlib.sha256()
+                size = 0
+                with actual.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        size += len(chunk)
+                        h.update(chunk)
+                passed = size == a["size"] and h.hexdigest() == a["sha256"]
+                reason = "matched" if passed else "content_or_size_mismatch"
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        checks.append({"artifact": a.get("id"), "name": a.get("name"),
+                       "check": "artifact_content_sha256_and_size_match",
+                       "pass": passed, "reason": reason})
+    return checks
+
+
 class Alfred:
     def __init__(self, store: Store | None = None, audit: AuditWriter | None = None, client=None):
         self.store = store or Store(config.store_path())
@@ -282,8 +317,9 @@ class Alfred:
     def _finalize_locked(self, mid, m):
         tasks = self.store.tasks_for(mid)
         checks = verify_tasks(tasks)
-        all_ok = bool(checks) and all(c['pass'] for c in checks)
         arts = self.store.artifacts_for(mid)
+        checks.extend(verify_artifact_integrity(arts, config.workspaces_dir() / mid))
+        all_ok = bool(checks) and all(c['pass'] for c in checks)
         report = {'mission_id': mid, 'kind': m['kind'], 'goal': m['goal'], 'verified': all_ok, 'checks': checks,
                   'tasks': [{'id': t['id'], 'agent': t['agent'], 'kind': t['kind'], 'status': t['status'], 'attempts': t['attempts'],
                              'summary': (t['result'] or {}).get('summary', t['error']), 'receipt': (t['result'] or {}).get('receipt')} for t in tasks],
