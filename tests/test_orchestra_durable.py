@@ -180,10 +180,10 @@ def test_one_missing_specialist_finding_gets_one_audited_model_retry(env):
     state = engine.store.get_mission(mid)
     assert state["status"] == "completed_unverified", state["result"]
     assert model.invalid_emitted is True
-    assert model.calls == 6
+    assert model.calls == 7
     events = AuditReader(env / "audit" / "retry.sqlite3").events(mid)
     assert sum(e["action"] == "specialist_response_rejected" for e in events) == 1
-    assert sum(e["action"] == "pre_model_gate" for e in events) == 6
+    assert sum(e["action"] == "pre_model_gate" for e in events) == 7
 
 
 def test_repeated_missing_specialist_findings_fail_closed(env):
