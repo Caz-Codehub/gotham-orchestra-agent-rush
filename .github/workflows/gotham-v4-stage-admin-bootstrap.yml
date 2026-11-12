@@ -66,6 +66,7 @@ jobs:
           scp "${SSH[@]}" "$FILE" gothamdeploy@155.138.194.208:gotham-v4-admin/provision_gotham_v4_canary_admin.sh
           ssh "${SSH[@]}" gothamdeploy@155.138.194.208 "chmod 600 \$HOME/gotham-v4-admin/provision_gotham_v4_canary_admin.sh; test \$(sha256sum \$HOME/gotham-v4-admin/provision_gotham_v4_canary_admin.sh | cut -d ' ' -f 1) = '$DIGEST'"
           echo "PASS: checksummed bootstrap uploaded without elevated execution"
+          echo "BOOTSTRAP_SHA256=$DIGEST"
           echo "BOOTSTRAP_SHA256=$DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "ADMIN_CONSOLE_REQUIRED=true" >> "$GITHUB_STEP_SUMMARY"
           echo "PRODUCTION_MODIFIED=false" >> "$GITHUB_STEP_SUMMARY"
