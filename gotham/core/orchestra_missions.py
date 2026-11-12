@@ -109,10 +109,13 @@ def mission_plan(goal: str, params: dict) -> list[dict]:
             ):
                 raise ValueError("software execution requires nonempty source/test files")
             if oid == "research" and (
-                not isinstance(p.get("name"), str) or not p["name"].endswith(".ipynb")
+                not isinstance(p.get("name"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,60}", p["name"])
                 or not isinstance(p.get("cells"), list) or not p["cells"]
+                or not all(isinstance(c, dict) and c.get("type") in ("code", "markdown")
+                           and isinstance(c.get("source"), str) for c in p["cells"])
             ):
-                raise ValueError("research execution requires notebook name (.ipynb) and nonempty cells")
+                raise ValueError("research execution requires a filename without extension and cells with type/code|markdown and source")
             if oid == "defense" and (
                 not isinstance(p.get("files"), dict) or not p["files"]
             ):
