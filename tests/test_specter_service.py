@@ -42,3 +42,12 @@ def test_service_never_auto_creates_privileged_socket_directories(monkeypatch, t
     assert not (tmp_path / "record").exists()
     assert not (tmp_path / "verify").exists()
     assert not (tmp_path / "audit").exists()
+
+
+def test_service_refuses_inherited_audit_secret(monkeypatch, tmp_path):
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setenv("GOTHAM_AUDIT_KEY", "never-share-a-private-specter-key")
+    with pytest.raises(SystemExit) as error:
+        main(_args(tmp_path, 1001, 1002))
+    assert error.value.code == 2
+    assert not (tmp_path / "audit").exists()
