@@ -4,6 +4,10 @@ name: gotham-unit-and-docker-tests
 on:
   push:
   pull_request:
+# Discard obsolete checks from superseded commits, never cancel latest HEAD.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
