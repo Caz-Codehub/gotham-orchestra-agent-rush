@@ -1,0 +1,71 @@
+name: Gotham 4 stage approved admin bootstrap (upload only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/gotham-v4-stage-admin-bootstrap.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  upload-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d83bf87945a90627fa3ce80288fca4e68c3a0ef4
+          persist-credentials: false
+      - name: Check admin script is inert without root
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = d83bf87945a90627fa3ce80288fca4e68c3a0ef4
+          bash -n deploy/provision_gotham_v4_canary_admin.sh
+          if bash deploy/provision_gotham_v4_canary_admin.sh > /tmp/nonroot-output 2>&1; then
+            echo "BLOCKED: admin script unexpectedly ran without root"; exit 1
+          fi
+          grep -q 'execute via the Vultr root/admin console' /tmp/nonroot-output
+          echo "PASS: syntax valid; non-root execution is rejected"
+      - name: Configure approved pinned SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEPLOY_KEY" || { echo 'BLOCKED: missing SSH credential'; exit 1; }
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os, pathlib, base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('BLOCKED: incomplete SSH credential')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null >~/.ssh/known_hosts
+          OBSERVED="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$OBSERVED" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo 'BLOCKED: changed host fingerprint'; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+      - name: Upload script to staging account; never execute as administrator
+        run: |
+          set -euo pipefail
+          FILE=deploy/provision_gotham_v4_canary_admin.sh
+          DIGEST="$(sha256sum "$FILE" | cut -d ' ' -f 1)"
+          SSH=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12)
+          ssh "${SSH[@]}" gothamdeploy@155.138.194.208 'install -d -m 700 "$HOME/gotham-v4-admin"'
+          scp "${SSH[@]}" "$FILE" gothamdeploy@155.138.194.208:gotham-v4-admin/provision_gotham_v4_canary_admin.sh
+          ssh "${SSH[@]}" gothamdeploy@155.138.194.208 "chmod 600 \$HOME/gotham-v4-admin/provision_gotham_v4_canary_admin.sh; test \$(sha256sum \$HOME/gotham-v4-admin/provision_gotham_v4_canary_admin.sh | cut -d ' ' -f 1) = '$DIGEST'"
+          echo "PASS: checksummed bootstrap uploaded without elevated execution"
+          echo "BOOTSTRAP_SHA256=$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "ADMIN_CONSOLE_REQUIRED=true" >> "$GITHUB_STEP_SUMMARY"
+          echo "PRODUCTION_MODIFIED=false" >> "$GITHUB_STEP_SUMMARY"
