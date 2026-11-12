@@ -172,9 +172,15 @@ jobs:
           assert "client_factory" in inspect.signature(run).parameters
           PY
           REMOTE
-      - name: Hold repeated automatic Qwen acceptance until runtime diagnosis clears
-        if: ${{ steps.staged_release.outcome == 'success' }}
-        run: echo "Stage deployed; real acceptance intentionally paused until worker-process isolation is verified." >> "$GITHUB_STEP_SUMMARY"
+      - name: Run one guarded full-orchestra acceptance after confirmed worker repair
+        if: ${{ steps.staged_release.outcome == 'success' && github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only this explicit workflow-repair commit may dispatch acceptance.
+          # Repeated workflow_run events must not launch duplicate missions.
+          gh workflow run gotham-v4-post-stage-acceptance.yml --ref main -f confirmation=RUN_SYNTHETIC_12
+          echo "Dispatched one 12-specialist real-model acceptance test." >> "$GITHUB_STEP_SUMMARY"
       - name: Save staging receipt as a GitHub Actions artifact
         if: always()
         uses: actions/upload-artifact@v4
