@@ -49,13 +49,13 @@ class CompatibleInference:
         if not self.configured:
             raise InferenceError(self.provider_name + ' model is not configured')
         from .model_policy import ModelInputDenied, screen
-        from .core.audit import AuditWriter
+        from .core.audit import audit_writer
         from .core.config import audit_path
         try:
             system, user, screening = screen(system, user)
         except ModelInputDenied as exc:
             with _TRANSPORT_AUDIT_GATE:
-                AuditWriter(audit_path()).record(None, None, 'InferenceGateway',
+                audit_writer(audit_path()).record(None, None, 'InferenceGateway',
                     'model_input_denied', {'reason': str(exc)[:100],
                                            'provider': self.provider_name[:50]})
             raise InferenceError('Model input denied by pre-inference policy') from exc
@@ -99,7 +99,7 @@ class CompatibleInference:
         # completions otherwise race on SQLite journal_mode=WAL setup.
         # Never hold this lock during network inference.
         with _TRANSPORT_AUDIT_GATE:
-            AuditWriter(audit_path()).record(
+            audit_writer(audit_path()).record(
                 None, None, 'InferenceGateway', 'pre_model_transport',
                 {'provider': self.provider_name[:50], 'model': self.model[:80],
                  'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
