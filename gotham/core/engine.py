@@ -17,7 +17,7 @@ from pathlib import Path
 from . import config, sbx
 from . import tools as T
 from . import research, sectools, lab  # noqa: F401  (register tools)
-from .audit import AuditWriter
+from .audit import AuditWriter, audit_writer
 from .playbooks import PLAYBOOKS
 from .runtime import NoModel
 from .store import Store, TERMINAL
@@ -68,7 +68,7 @@ def verify_artifact_integrity(artifacts: list[dict], root: Path) -> list[dict]:
 class Alfred:
     def __init__(self, store: Store | None = None, audit: AuditWriter | None = None, client=None):
         self.store = store or Store(config.store_path())
-        self.audit = audit or AuditWriter(config.audit_path())
+        self.audit = audit or audit_writer(config.audit_path())
         self.client = client  # inference client (None => agent-mode tasks BLOCKED)
 
     # ------------------------------------------------------------ intake & planning
