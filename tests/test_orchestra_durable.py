@@ -184,3 +184,27 @@ def test_one_missing_specialist_finding_gets_one_audited_model_retry(env):
     events = AuditReader(env / "audit" / "retry.sqlite3").events(mid)
     assert sum(e["action"] == "specialist_response_rejected" for e in events) == 1
     assert sum(e["action"] == "pre_model_gate" for e in events) == 6
+
+
+def test_repeated_missing_specialist_findings_fail_closed(env):
+    """Two malformed replies must never produce a made-up specialist report."""
+    class NeverFinding(FakeModel):
+        def json(self, system, user, *, max_tokens=450):
+            if "specialist under" in system:
+                self.calls += 1
+                return {"summary": "no finding present"}
+            return super().json(system, user, max_tokens=max_tokens)
+
+    model = NeverFinding()
+    engine = Alfred(store=Store(env / "data" / "reject.sqlite3"),
+                    audit=AuditWriter(env / "audit" / "reject.sqlite3"),
+                    client=model)
+    mid = engine.submit("orchestra", "Analyze only a disposable synthetic file",
+                        {"orchestra": "software"}, "operator:test")
+    run_until_done(engine, concurrency=1)
+    state = engine.store.get_mission(mid)
+    assert state["status"] == "failed"
+    tasks = engine.store.tasks_for(mid)
+    assert sum(t["status"] == "succeeded" and t["kind"] == "orchestra_specialist" for t in tasks) == 0
+    assert any(t["kind"] == "orchestra_review" and t["status"] != "succeeded" for t in tasks)
+    assert (state["result"] or {}).get("verified") is False
