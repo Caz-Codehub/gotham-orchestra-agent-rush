@@ -175,7 +175,7 @@ class Store:
             rows = c.execute('SELECT * FROM tasks WHERE mission_id=? ORDER BY seq', (mission_id,)).fetchall()
         return [self._task(r) for r in rows]
 
-    def claim_next(self, worker_id, lease_s, agents=None) -> dict | None:
+    def claim_next(self, worker_id, lease_s, agents=None, allowed_pairs=None) -> dict | None:
         """Atomically claim one runnable task (all dependencies succeeded, mission not cancelled)."""
         with self._conn() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -185,6 +185,8 @@ class Store:
                 for r in rows:
                     t = self._task(r)
                     if agents and t['agent'] not in agents:
+                        continue
+                    if allowed_pairs is not None and (t['agent'], t['kind']) not in allowed_pairs:
                         continue
                     deps = t['depends'] or []
                     if deps:
