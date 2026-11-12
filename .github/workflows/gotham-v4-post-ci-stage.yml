@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   test-and-stage:
-    if: ${{ github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'claude/gotham-4-0-execution-8f66gu' && github.event.workflow_run.head_repository.full_name == github.repository) }}
+    if: ${{ github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'claude/gotham-4-0-execution-8f66gu' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -33,6 +33,8 @@ jobs:
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           echo "Checking source commit $SHA"
+          BRANCH_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/claude/gotham-4-0-execution-8f66gu" --jq '.object.sha')"
+          test "$SHA" = "$BRANCH_HEAD" || { echo "BLOCKED: obsolete green commit; newer Gotham branch HEAD exists"; exit 1; }
           confirmed=0
           for attempt in $(seq 1 48); do
             gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA&per_page=100" > /tmp/gotham-ci-runs.json
