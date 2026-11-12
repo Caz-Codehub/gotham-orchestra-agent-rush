@@ -154,3 +154,33 @@ def test_execution_requires_explicit_workload_and_batman_approval(env):
     approvals = a.store.approvals(mission_id=mid)
     assert len(approvals) == 1 and approvals[0]["action"] == "task_start"
     assert approvals[0]["status"] == "pending"
+
+def test_one_missing_specialist_finding_gets_one_audited_model_retry(env):
+    """H1 counterexample: local model returns syntactically valid JSON missing required finding."""
+    class InitiallyMalformed(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.invalid_emitted = False
+
+        def json(self, system, user, *, max_tokens=450):
+            if "specialist under" in system and not self.invalid_emitted:
+                self.invalid_emitted = True
+                self.calls += 1
+                return {"summary": "no finding present"}
+            return super().json(system, user, max_tokens=max_tokens)
+
+    from gotham.core.audit import AuditReader
+    model = InitiallyMalformed()
+    writer = AuditWriter(env / "audit" / "retry.sqlite3")
+    engine = Alfred(store=Store(env / "data" / "retry.sqlite3"),
+                    audit=writer, client=model)
+    mid = engine.submit("orchestra", "Analyze a synthetic software fixture only",
+                        {"orchestra": "software"}, "operator:test")
+    run_until_done(engine, concurrency=1)
+    state = engine.store.get_mission(mid)
+    assert state["status"] == "completed_unverified", state["result"]
+    assert model.invalid_emitted is True
+    assert model.calls == 6
+    events = AuditReader(env / "audit" / "retry.sqlite3").events(mid)
+    assert sum(e["action"] == "specialist_response_rejected" for e in events) == 1
+    assert sum(e["action"] == "pre_model_gate" for e in events) == 6
