@@ -209,7 +209,7 @@ def test_specter_independently_records_and_workers_cannot_alter_it(alfred):
     run_until_done(alfred)
     rep = AuditReader(config.audit_path()).report(mid)
     actions = [e['action'] for e in rep['events']]
-    for needed in ('mission_authorized', 'task_assigned', 'workspace_seeded', 'task_started', 'tool_call', 'tool_result',
+    for needed in ('mission_submitted', 'task_assigned', 'workspace_seeded', 'task_started', 'tool_call', 'tool_result',
                    'artifact_created', 'task_finished', 'mission_finalized'):
         assert needed in actions, needed
     assert rep['integrity']['valid'] and rep['tool_calls'] > 5
