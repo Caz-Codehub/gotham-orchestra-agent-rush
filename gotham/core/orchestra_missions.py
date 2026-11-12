@@ -278,7 +278,7 @@ def execute(ctx, params: dict, client) -> dict:
             # Retry is conditional, budgeted, and committed as an audit event.
             ctx.record("specialist_response_rejected", {"role": role, "reason": "missing finding"})
             out, digest = _invoke(ctx, client, f"{oid}:{role}",
-                "You are a specialist providing a bounded ANALYSIS, not test results. "
+                "You are a specialist under the assigned orchestra captain providing bounded ANALYSIS, not test results. "
                 "You MUST return exactly this JSON shape with a nonempty finding: "
                 "{\"finding\":\"short factual analysis\","
                 "\"next_steps\":[],\"tests\":[],\"limitations\":[\"not executed\"]}.",
