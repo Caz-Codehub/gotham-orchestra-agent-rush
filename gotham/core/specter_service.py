@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import stat
 import threading
 from pathlib import Path
 
@@ -46,14 +47,23 @@ def main(argv=None):
     for p in (record.parent, verify.parent, journal.parent):
         if p.is_symlink():
             ap.error("Specter IPC and journal directories cannot be symbolic links")
+        mode = stat.S_IMODE(p.stat().st_mode)
         if p.stat().st_uid != os.geteuid():
             ap.error("each private Specter directory must be owned by the auditor service UID")
+        if mode & 0o007:
+            ap.error("Specter socket and journal directories must deny access to other users")
+        if p == journal.parent and mode & 0o077:
+            ap.error("Specter journal directory must be private to auditor UID (mode 0700)")
+        if p != journal.parent and mode & 0o027:
+            ap.error("Specter socket directories may grant group-only connect but not group writes")
     if journal.is_symlink() or journal.with_suffix(".key").is_symlink():
         ap.error("Specter journal and key must not be symbolic links")
-    if journal.exists() and journal.stat().st_uid != os.geteuid():
-        ap.error("private journal must be owned by Specter")
-    if journal.with_suffix(".key").exists() and journal.with_suffix(".key").stat().st_uid != os.geteuid():
-        ap.error("private HMAC key must be owned by Specter")
+    for private_file in (journal, journal.with_suffix(".key")):
+        if private_file.exists():
+            if private_file.stat().st_uid != os.geteuid():
+                ap.error("Specter journal and key must be owned by auditor UID")
+            if stat.S_IMODE(private_file.stat().st_mode) & 0o077:
+                ap.error("Specter journal and key must not be group/world readable")
 
     stop = threading.Event()
     rec = None
