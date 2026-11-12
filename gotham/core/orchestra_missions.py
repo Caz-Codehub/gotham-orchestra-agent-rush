@@ -150,7 +150,7 @@ def _safe_input(text: str, limit: int) -> str:
     return text
 
 
-def _invoke(ctx, client, actor: str, system: str, payload: dict, *, max_tokens=450) -> tuple[dict, str]:
+def _invoke(ctx, client, actor: str, system: str, payload: dict, *, max_tokens=220) -> tuple[dict, str]:
     """Commit a metadata-only receipt before each inference call; exceptions fail closed."""
     if not getattr(client, "configured", False):
         raise OrchestraBlocked("No configured inference model; orchestra work was not simulated")
@@ -214,7 +214,7 @@ def execute(ctx, params: dict, client) -> dict:
             {"goal": params["goal"], "captains": [{"name": e["captain"],
               "orchestra": e["orchestra"], "receipt": e["model_sha256"]} for e in evidence],
              "approved_tool_receipts": execution_evidence},
-            max_tokens=700)
+            max_tokens=240)
         if not isinstance(out.get("summary"), str) or not out["summary"].strip():
             raise OrchestraBlocked("Alfred summary missing")
         ctx.record("alfred_aggregated_captain_reports", {"captains": len(reviews),
@@ -239,7 +239,8 @@ def execute(ctx, params: dict, client) -> dict:
             f"You are {spec['captain']}, a domain captain reporting to Alfred. "
             "Plan three bounded analytical tasks for your assigned specialist roles only. "
             "Do not fabricate tests, tool execution, files, or source access. "
-            "Return JSON: {\"instructions\":{\"role\":\"task\"}}.",
+            "Reply with a compact JSON object {\"instructions\":{}}. "
+            "Avoid long explanations; missing instructions use deterministic role focuses.",
             {**payload, "roles": roles, "domain": spec["mission"]})
         proposals = out.get("instructions", {})
         if not isinstance(proposals, dict):
@@ -264,13 +265,27 @@ def execute(ctx, params: dict, client) -> dict:
         assignment = str(instructions.get(role, ""))[:350]
         out, digest = _invoke(ctx, client, f"{oid}:{role}",
             f"You are {role}, specialist under {spec['captain']} reporting to Alfred. "
-            f"Your responsibility is {params['focus']}. Return JSON fields finding, "
-            "next_steps (array), tests (array), limitations (array). "
-            "Only report analytical findings; never claim that a tool or external test ran.",
-            {**payload, "assignment": assignment}, max_tokens=650)
+            f"Your responsibility is {params['focus']}. "
+            "Reply ONLY with compact JSON: "
+            "{\"finding\":\"one short specific observation\","
+            "\"next_steps\":[],\"tests\":[],\"limitations\":[]}. "
+            "The finding field is mandatory and must not be empty. "
+            "Do not claim tests or external tools ran.",
+            {**payload, "assignment": assignment}, max_tokens=210)
         finding = out.get("finding")
         if not isinstance(finding, str) or not finding.strip():
-            raise OrchestraBlocked("specialist returned no finding")
+            # One independent second attempt; never fabricate a missing finding.
+            # Retry is conditional, budgeted, and committed as an audit event.
+            ctx.record("specialist_response_rejected", {"role": role, "reason": "missing finding"})
+            out, digest = _invoke(ctx, client, f"{oid}:{role}",
+                "You are a specialist providing a bounded ANALYSIS, not test results. "
+                "You MUST return exactly this JSON shape with a nonempty finding: "
+                "{\"finding\":\"short factual analysis\","
+                "\"next_steps\":[],\"tests\":[],\"limitations\":[\"not executed\"]}.",
+                {"goal": goal[:500], "role": role, "assignment": assignment[:200]}, max_tokens=150)
+            finding = out.get("finding")
+            if not isinstance(finding, str) or not finding.strip():
+                raise OrchestraBlocked("specialist returned no finding after bounded retry")
         def arr(key):
             value = out.get(key, [])
             return [str(x)[:240] for x in value[:5]] if isinstance(value, list) else []
