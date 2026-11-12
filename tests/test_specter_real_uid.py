@@ -36,7 +36,9 @@ def _drop(uid):
 def _auditor(record, verify, journal, ready, stop):
     _drop(AUDITOR)
     rec = SpecterRecordServer(record, journal, allowed_uids={WORKER})
-    ver = SpecterVerifyServer(verify, journal, allowed_uids={BATMAN})
+    # Rootless canary explicitly grants verifier-socket group access only to Batman.
+    # The default 0600 remains secure for same-UID and unprovisioned deployments.
+    ver = SpecterVerifyServer(verify, journal, allowed_uids={BATMAN}, mode=0o660)
     import threading
     rt = threading.Thread(target=rec.serve_forever, daemon=True)
     vt = threading.Thread(target=ver.serve_forever, daemon=True)
