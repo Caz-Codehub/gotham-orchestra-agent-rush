@@ -1,0 +1,69 @@
+name: Gotham 4 admin capability check (read-only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/gotham-v4-admin-capability.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gotham-v4-admin-capability
+  cancel-in-progress: true
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Configure pinned staging SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEPLOY_KEY" || { echo 'BLOCKED: missing staging SSH credential'; exit 1; }
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os,pathlib,base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('BLOCKED: incomplete SSH credential')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null >~/.ssh/known_hosts
+          OBSERVED="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$OBSERVED" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo 'BLOCKED: host fingerprint changed'; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+      - name: Inspect staging-only privilege availability; NO mutation
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          test "$(id -un)" = "gothamdeploy"
+          echo "PASS: logged in as existing staging identity"
+          if sudo -n true </dev/null >/dev/null 2>&1; then
+            echo "ADMIN_CAPABILITY=passwordless_sudo_available"
+          else
+            echo "ADMIN_CAPABILITY=no_passwordless_sudo"
+          fi
+          for name in gothamspecter gothamworker gothambatmanapi gothamsandbox; do
+            if getent passwd "$name" >/dev/null; then
+              echo "ACCOUNT_$name=exists"
+            else
+              echo "ACCOUNT_$name=absent"
+            fi
+          done
+          test "$(systemctl is-active gotham.service 2>/dev/null || true)" = "active" && echo "PRODUCTION_STATUS=active" || echo "PRODUCTION_STATUS=not_active"
+          echo "PASS: no users, groups, services, keys, or files modified"
+          REMOTE
