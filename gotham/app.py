@@ -23,6 +23,7 @@ from .orchestras import preview as orchestra_preview, run_orchestra
 from .sandbox import containment_probe, SandboxUnavailable
 from .demo_artifacts import execute_demo
 from .specter import SpecterJournal, watch
+from .core.api import router as v4_router
 
 BASE=Path(__file__).resolve().parent
 DB=Path(os.environ.get('GOTHAM_LEDGER_PATH','/tmp/gotham-missions.sqlite3'))
@@ -48,7 +49,19 @@ async def lifespan(application):
         if _watchdog_thread is not None:
             _watchdog_thread.join(timeout=4)
 
-app=FastAPI(title='Gotham Project: Zero-Budget War Room',version='2.2-orchestra-mvp',lifespan=lifespan)
+app=FastAPI(title='Gotham 4.0 Command Center',version='4.0.0-dev',lifespan=lifespan)
+app.include_router(v4_router)
+MAX_BODY=int(os.environ.get('GOTHAM_MAX_BODY_BYTES','1000000'))
+
+@app.middleware('http')
+async def limit_body(request:Request,call_next):
+    # Reject oversized API bodies up-front (a reverse proxy should enforce the same limit).
+    if request.url.path.startswith('/api/'):
+        cl=request.headers.get('content-length')
+        if cl and cl.isdigit() and int(cl)>MAX_BODY:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({'detail':f'request body exceeds {MAX_BODY} bytes'},status_code=413)
+    return await call_next(request)
 lock=Lock()
 
 class Objective(BaseModel):
@@ -200,6 +213,10 @@ class OrchestraOrder(BaseModel):
     goal:str=Field(min_length=10,max_length=1000)
     context:str=Field(default='',max_length=3000)
     scope:str=Field(default='',max_length=800)
+
+@app.get('/command',response_class=HTMLResponse)
+def command_center():
+    return (BASE/'static'/'command.html').read_text(encoding='utf-8')
 
 @app.get('/orchestra',response_class=HTMLResponse)
 def orchestra_dashboard():

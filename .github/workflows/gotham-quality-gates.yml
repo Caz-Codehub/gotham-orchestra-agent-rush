@@ -1,0 +1,61 @@
+name: Gotham quality gates
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+# Discard obsolete checks from superseded commits, never cancel latest HEAD.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests-and-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies (runtime + isolated scanner venv)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m venv .scanners
+          .scanners/bin/pip install -q -r requirements-scanners.txt
+      - name: Compile Python source
+        run: python -m compileall -q gotham tests scripts
+      - name: Pull base image used by the legacy sandbox tests
+        run: for i in 1 2 3; do docker pull python:3.12-alpine && break; sleep $((i*15)); done; docker image inspect python:3.12-alpine
+      - name: Build sandbox images (real Docker)
+        run: |
+          python - <<'PY'
+          from gotham.core import sbx
+          for i in ('gotham-sandbox:latest', 'gotham-lab-target:latest', 'gotham-research:latest'):
+              sbx.ensure_image(i); print('built', i)
+          PY
+      - name: Full test suite (unit + real-execution acceptance)
+        run: python -m pytest -q -ra --maxfail=5
+        env:
+          GOTHAM_RUN_DOCKER_TESTS: '1'
+      - name: Audit runtime dependencies (hard gate)
+        run: python -m pip_audit -r requirements.txt
+      - name: Audit scanner dependencies (time-boxed exceptions in docs/GOTHAM_SECURITY_EXCEPTIONS.md)
+        run: |
+          python -m pip_audit -r requirements-scanners.txt \
+            --ignore-vuln CVE-2026-59951 --ignore-vuln CVE-2026-116685 --ignore-vuln CVE-2026-116684 \
+            --ignore-vuln CVE-2026-116686 --ignore-vuln CVE-2026-114603
+      - name: Self-scan with Gotham's Semgrep rule-pack (hard gate)
+        run: .scanners/bin/semgrep scan --config rules/semgrep --metrics=off --error --severity ERROR gotham/core gotham/app.py
+      - name: Reject committed credential files
+        run: |
+          python - <<'PY'
+          import subprocess,sys
+          tracked=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+          bad=[p for p in tracked if p.split('/')[-1] in ('.env','id_rsa','id_ed25519','credentials.json','service-account.json') or p.endswith(('.pem','.key','.p12'))]
+          if bad:
+              print('Potential secret files tracked:',*bad,sep='\n'); sys.exit(1)
+          print('No common credential filenames tracked')
+          PY

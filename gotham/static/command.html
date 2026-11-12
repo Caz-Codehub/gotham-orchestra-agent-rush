@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gotham 4.0 Command Center</title>
+<style>
+:root{--bg:#0b0d12;--panel:#141821;--panel2:#1b2030;--line:#2a3147;--fg:#e6e9f2;--mut:#8b93ab;--ok:#3ecf8e;--warn:#f5b84a;--bad:#ff6b6b;--acc:#6ea8ff}
+@media (prefers-color-scheme:light){:root{--bg:#f4f6fb;--panel:#fff;--panel2:#eef1f8;--line:#d5dbea;--fg:#151a29;--mut:#5d6785;--acc:#2456d6}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0;margin-right:auto}header input{background:var(--panel2);border:1px solid var(--line);color:var(--fg);padding:6px 8px;border-radius:6px;min-width:150px}
+nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--line)}
+nav button{background:none;border:1px solid transparent;color:var(--mut);padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+nav button.on{background:var(--panel2);color:var(--fg);border-color:var(--line)}
+main{padding:16px;max-width:1200px;margin:auto}section{display:none}section.on{display:block}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}.card h3{margin:0 0 8px;font-size:14px}
+label{display:block;color:var(--mut);font-size:12px;margin:8px 0 2px}
+input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--fg);padding:6px 8px;border-radius:6px;font:inherit}
+textarea{min-height:110px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+button.act{background:var(--acc);color:#fff;border:0;padding:7px 12px;border-radius:6px;cursor:pointer;margin:8px 6px 0 0}button.act.bad{background:var(--bad)}button.act.ok{background:var(--ok);color:#042}button.act.ghost{background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.5}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--line)}
+.s-verified,.s-succeeded,.s-approved{color:var(--ok);border-color:var(--ok)}.s-failed,.s-blocked,.s-denied,.s-cancelled{color:var(--bad);border-color:var(--bad)}.s-running,.s-pending,.s-planning{color:var(--acc);border-color:var(--acc)}.s-awaiting_approval{color:var(--warn);border-color:var(--warn)}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;max-height:320px;font-size:12px;white-space:pre-wrap;word-break:break-word}
+.chat{height:260px;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px}.msg{margin:4px 0}.msg b{color:var(--acc)}
+.err{background:#3a1519;border:1px solid var(--bad);color:#ffd5d5;padding:8px;border-radius:6px;margin-bottom:10px;display:none}
+.mut{color:var(--mut)}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1}.kpi{font-size:22px;font-weight:600}
+@media(max-width:600px){main{padding:10px}header input{flex:1}}
+</style></head><body>
+<header><h1>🦇 Gotham 4.0 Command Center</h1>
+<input id="tok" type="password" placeholder="Access token (Bearer)" autocomplete="off"><button class="act" id="login">Connect</button><span id="who" class="mut"></span></header>
+<nav id="tabs"></nav>
+<main><div id="err" class="err"></div>
+<section id="s-command"><div class="grid">
+ <div class="card"><h3>Batman → Alfred</h3><div id="chat" class="chat"></div><div class="row"><input id="chatin" placeholder="help | status | missions | explain &lt;id&gt;"><button class="act" id="chatsend" style="flex:0">Send</button></div><p class="mut">Alfred answers from live state. Without a configured model he runs in rules mode and says so.</p></div>
+ <div class="card"><h3>Submit mission</h3><label>Kind</label><select id="kind"></select><label>Goal</label><input id="goal" value="">
+ <label>Parameters (JSON)</label><textarea id="params">{}</textarea><button class="act" id="submit">Submit mission</button><div class="mut" id="submitmsg"></div></div>
+ <div class="card"><h3>Pending approvals</h3><div id="approvals" class="mut">–</div></div>
+</div></section>
+<section id="s-missions"><div class="grid"><div class="card"><h3>Mission history</h3><div id="mlist"></div></div><div class="card" style="grid-column:span 2"><h3>Mission detail <span id="mid" class="mut"></span></h3><div id="mdetail" class="mut">Select a mission.</div></div></div></section>
+<section id="s-agents"><div id="agentcards" class="grid"></div></section>
+<section id="s-engineering"><div class="grid"><div class="card"><h3>Software engineering workspace</h3><p class="mut">Forge builds, tests in a network-less sandbox, repairs (supplied patch or configured model) and commits.</p>
+ <label>Goal</label><input id="eg" value="Repair add() so the tests pass"><label>Files (JSON: path → content)</label><textarea id="ef">{"calc.py":"def add(a, b):\n    return a - b\n","test_calc.py":"from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"}</textarea>
+ <label>Repair patch (JSON, optional)</label><textarea id="ep">{"calc.py":"def add(a, b):\n    return a + b\n"}</textarea><button class="act" id="esub">Run engineering mission</button></div><div class="card"><h3>Result</h3><div id="eres" class="mut">–</div></div></div></section>
+<section id="s-research"><div class="grid"><div class="card"><h3>Research notebook workspace</h3><p class="mut">Oracle executes the notebook top-to-bottom in the sandboxed kernel; a failing cell fails the job.</p>
+ <label>Notebook name</label><input id="rn" value="analysis"><label>Cells (JSON list)</label><textarea id="rc">[{"type":"code","source":"import numpy as np\nprint(float(np.arange(10).mean()))"}]</textarea>
+ <label>Training (JSON, optional)</label><input id="rt" value='{"epochs":6,"interrupt_at":3}'><button class="act" id="rsub">Execute notebook</button></div><div class="card"><h3>Result</h3><div id="rres" class="mut">–</div></div></div></section>
+<section id="s-cyber"><div class="grid"><div class="card"><h3>Cyber defense</h3><p class="mut">Sentinel: Semgrep, secrets, config and dependency audit; auth-log correlation.</p>
+ <label>Files to audit (JSON)</label><textarea id="cf">{"app.py":"import subprocess\ndef run(c):\n    return subprocess.run(c, shell=True)\n","requirements.txt":"requests==2.19.0\n"}</textarea><button class="act" id="csub">Run security audit</button>
+ <label>Auth log</label><textarea id="cl">Nov 10 10:00:00 h sshd[1]: Failed password for root from 203.0.113.9 port 22
+Nov 10 10:00:01 h sshd[1]: Failed password for root from 203.0.113.9 port 22
+Nov 10 10:00:02 h sshd[1]: Failed password for admin from 203.0.113.9 port 22
+Nov 10 10:00:03 h sshd[1]: Failed password for oracle from 203.0.113.9 port 22
+Nov 10 10:00:04 h sshd[1]: Failed password for pi from 203.0.113.9 port 22
+Nov 10 10:00:09 h sshd[1]: Accepted password for root from 203.0.113.9 port 22</textarea><button class="act ghost" id="clsub">Analyse log</button></div><div class="card"><h3>Findings</h3><div id="cres" class="mut">–</div></div></div></section>
+<section id="s-lab"><div class="grid"><div class="card"><h3>Authorized security laboratory</h3><p class="mut">Scoped validation of a <b>deliberately vulnerable local target</b> on an internal-only Docker network. Requires explicit approval (see Command → Pending approvals). Out-of-scope targets are refused and audited.</p>
+ <button class="act" id="labsub">Request lab validation</button><hr><h3>Malware analysis (inert samples only)</h3><label>Sample name</label><input id="mname" value="inert.py"><label>Sample content</label><textarea id="mcontent">import socket
+C2 = "http://beacon-test.example.invalid/gate.php"
+CAMPAIGN = "GOTHAM-INERT-SAMPLE-0001"
+print("inert")</textarea><label><input type="checkbox" id="mdyn" style="width:auto"> Dynamic analysis (needs approval)</label><button class="act" id="msub">Analyse sample</button></div><div class="card"><h3>Result</h3><div id="lres" class="mut">–</div></div></div></section>
+<section id="s-artifacts"><div class="grid"><div class="card" style="grid-column:span 2"><h3>Artifacts <button class="act ghost" id="arefresh">Refresh</button></h3><div id="alist"></div></div><div class="card"><h3>Preview</h3><div id="apreview" class="mut">–</div></div></div></section>
+<section id="s-audit"><div class="card"><h3>Specter audit (Batman token required)</h3><div class="row"><input id="auditmid" placeholder="mission id (optional)"><button class="act" id="auditload" style="flex:0">Load</button></div><div id="auditsum" class="mut"></div><div id="audit"></div></div></section>
+<section id="s-ops"><div class="grid"><div class="card"><h3>Infrastructure</h3><div id="infra">–</div><button class="act ghost" id="irefresh">Refresh</button></div><div class="card"><h3>Budget & usage</h3><div id="budget">–</div></div><div class="card"><h3>Recovery controls</h3><p class="mut">Re-queue tasks whose worker died, remove leaked containers (Batman).</p><button class="act" id="recover">Run recovery now</button><div id="recres" class="mut"></div></div><div class="card"><h3>Error log</h3><div id="errlog" class="mut">none</div></div></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let TOK=sessionStorage.getItem('gotham_tok')||'';let CUR=null;const ERRS=[];
+const TABS=[['command','Command'],['missions','Missions'],['agents','Agents'],['engineering','Engineering'],['research','Research'],['cyber','Cyber defense'],['lab','Security lab'],['artifacts','Artifacts'],['audit','Audit'],['ops','Ops']];
+function el(t,a={},...k){const e=document.createElement(t);for(const[x,v]of Object.entries(a)){if(x==='class')e.className=v;else if(x.startsWith('on'))e[x]=v;else e.setAttribute(x,v)}for(const c of k.flat())e.append(c instanceof Node?c:String(c??''));return e}
+function pill(s){return el('span',{class:'pill s-'+s},s)}
+function showErr(m){ERRS.unshift(new Date().toLocaleTimeString()+' '+m);ERRS.length=Math.min(ERRS.length,30);$('err').textContent=m;$('err').style.display='block';$('errlog').textContent=ERRS.join('\n');setTimeout(()=>$('err').style.display='none',8000)}
+async function api(path,opt={}){const r=await fetch('/api/v4'+path,{...opt,headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOK,...(opt.headers||{})}});let b=null;try{b=await r.json()}catch(e){}
+ if(!r.ok){const m=(b&&b.detail)||r.statusText;showErr(`${opt.method||'GET'} ${path}: ${r.status} ${typeof m==='string'?m:JSON.stringify(m)}`);throw new Error(m)}return b}
+function tabs(){const n=$('tabs');TABS.forEach(([id,l])=>n.append(el('button',{'data-t':id,onclick:()=>go(id)},l)));go(location.hash.slice(1)||'command')}
+function go(id){document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id==='s-'+id));document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===id));location.hash=id;refresh()}
+function tbl(head,rows){const t=el('table');t.append(el('tr',{},head.map(h=>el('th',{},h))));rows.forEach(r=>t.append(el('tr',{},r.map(c=>el('td',{},c)))));return t}
+async function submitMission(kind,goal,params,out){const r=await api('/missions',{method:'POST',body:JSON.stringify({kind,goal,params})});CUR=r.mission.id;out.replaceChildren(el('div',{},'Mission ',r.mission.id.slice(0,8),' ',pill(r.mission.status)));poll(CUR,out);return r}
+async function poll(mid,out){for(let i=0;i<400;i++){let d;try{d=await api('/missions/'+mid)}catch(e){return}renderMission(d,out,true);if(['verified','failed','cancelled'].includes(d.mission.status))return;await new Promise(r=>setTimeout(r,1500))}}
+function renderMission(d,out,withEvidence){const m=d.mission,box=el('div');box.append(el('div',{},pill(m.status),' ',el('b',{},m.kind),' ',m.goal));
+ box.append(tbl(['Agent','Task','Status','Summary'],d.tasks.map(t=>[t.agent,t.kind,pill(t.status),((t.result&&t.result.summary)||t.error||'').slice(0,200)])));
+ const ap=d.approvals.filter(a=>a.status==='pending');if(ap.length)box.append(el('div',{class:'mut'},'⚠ Awaiting approval: ',ap.map(a=>a.action+' ').join('')));
+ if(m.result&&m.result.checks)box.append(el('p',{},'Verification: ',m.result.checks.filter(c=>c.pass).length+'/'+m.result.checks.length+' checks passed'));
+ const row=el('div');if(!['verified','failed','cancelled'].includes(m.status))row.append(el('button',{class:'act bad',onclick:async()=>{await api('/missions/'+m.id+'/cancel',{method:'POST'});refresh()}},'Cancel'));
+ d.tasks.filter(t=>['failed','cancelled'].includes(t.status)).forEach(t=>row.append(el('button',{class:'act ghost',onclick:async()=>{await api('/tasks/'+t.id+'/retry',{method:'POST'});if(out)poll(m.id,out)}},'Retry '+t.agent)));
+ box.append(row);if(d.artifacts.length)box.append(el('div',{},'Artifacts: ',d.artifacts.map(a=>el('a',{href:'#',onclick:e=>{e.preventDefault();previewArt(a.id)}},a.name+' ')))) ;
+ if(withEvidence)api('/missions/'+m.id+'/evidence').then(ev=>{const pre=el('pre',{},JSON.stringify(ev.tasks.map(t=>({agent:t.agent,kind:t.kind,evidence:(t.result||{}).evidence})),null,1).slice(0,6000));box.append(el('details',{},el('summary',{},'Raw evidence (tool output)'),pre))}).catch(()=>{});out.replaceChildren(box)}
+async function previewArt(id){const p=await api('/artifacts/'+id+'/preview');go('artifacts');$('apreview').replaceChildren(el('div',{},p.name,' ',pill(p.sha256_verified?'verified':'failed'),' sha256 ok:',String(p.sha256_verified)),el('pre',{},p.text.slice(0,8000)),el('a',{href:'#',onclick:async e=>{e.preventDefault();const r=await fetch('/api/v4/artifacts/'+id+'/download',{headers:{Authorization:'Bearer '+TOK}});const b=await r.blob();const u=URL.createObjectURL(b);const a=el('a',{href:u,download:p.name});document.body.append(a);a.click();a.remove()}},'Download'))}
+async function refreshApprovals(){const r=await api('/approvals');const box=$('approvals');if(!r.approvals.length){box.textContent='No pending approvals.';return}box.replaceChildren(...r.approvals.map(a=>el('div',{class:'card'},el('b',{},a.action),' mission ',a.mission_id.slice(0,8),el('pre',{},JSON.stringify(a.detail,null,1)),
+ el('button',{class:'act ok',onclick:async()=>{await api('/approvals/'+a.id+'/decide',{method:'POST',body:JSON.stringify({approve:true})});refresh()}},'Approve'),el('button',{class:'act bad',onclick:async()=>{await api('/approvals/'+a.id+'/decide',{method:'POST',body:JSON.stringify({approve:false})});refresh()}},'Deny'))))}
+async function refreshMissions(){const r=await api('/missions');$('mlist').replaceChildren(tbl(['Id','Kind','Status'],r.missions.map(m=>[el('a',{href:'#',onclick:e=>{e.preventDefault();CUR=m.id;refresh()}},m.id.slice(0,8)),m.kind,pill(m.status)])));
+ if(CUR){$('mid').textContent=CUR.slice(0,8);renderMission(await api('/missions/'+CUR),$('mdetail'),true)}}
+async function refreshAgents(){const r=await api('/agents');const c=r.captain;const cards=[el('div',{class:'card'},el('h3',{},'Captain Alfred'),el('div',{},'Planner: '+c.planner),el('div',{},'Model: '+c.provider+(c.model_configured?' (configured)':' (not configured)')))];
+ r.agents.forEach(a=>cards.push(el('div',{class:'card'},el('h3',{},a.name,' ',pill(a.state==='working'?'running':'pending')),el('div',{class:'mut'},a.role),el('div',{},'Tasks: '+JSON.stringify(a.task_counts)),el('div',{},a.current.map(x=>'▶ '+x.title).join(', ')),el('details',{},el('summary',{},a.tools.length+' permitted tools'),el('div',{class:'mut'},a.tools.join(', '))))));$('agentcards').replaceChildren(...cards)}
+async function refreshArtifacts(){const r=await api('/artifacts');$('alist').replaceChildren(tbl(['Name','Producer','Size','sha256','Mission'],r.artifacts.map(a=>[el('a',{href:'#',onclick:e=>{e.preventDefault();previewArt(a.id)}},a.name),a.producer,a.size,a.sha256.slice(0,12),a.mission_id.slice(0,8)])))}
+async function loadAudit(){const mid=$('auditmid').value.trim();try{const v=await api('/audit/verify');$('auditsum').replaceChildren(pill(v.valid?'verified':'failed'),' hash chain '+(v.valid?'VALID':'BROKEN at seq '+v.broken_at_seq)+' ('+v.checked+' entries)');
+ const r=await api('/audit/events?limit=400'+(mid?'&mission_id='+encodeURIComponent(mid):''));$('audit').replaceChildren(tbl(['#','Actor','Action','Detail'],r.events.slice(-200).reverse().map(e=>[e.seq,e.actor,e.action,JSON.stringify(e.detail).slice(0,160)])))}catch(e){$('auditsum').textContent='Audit access requires the Batman token.'}}
+async function refreshOps(){const i=await api('/infra');$('infra').replaceChildren(el('div',{},'Docker: ',pill(i.docker?'succeeded':'failed'),' Workers online: ',String(i.workers.length)),el('div',{},'Images: '+Object.entries(i.images).map(([k,v])=>k+(v?' ✓':' ✗')).join(', ')),
+ el('div',{},'Audit chain: ',pill(i.audit.valid?'verified':'failed'),' '+i.audit.checked+' entries'),el('div',{},'Disk free '+i.disk.free_gb+' GB, CPUs '+i.cpus),el('div',{},'Inference: '+i.inference.provider+(i.inference.configured?'':' (not configured)')),el('pre',{},JSON.stringify(i.counts,null,1)));
+ const b=await api('/budget');$('budget').replaceChildren(el('pre',{},JSON.stringify(b,null,1)))}
+async function refresh(){if(!TOK)return;const on=document.querySelector('section.on').id.slice(2);try{({command:async()=>{await refreshApprovals();loadChat()},missions:refreshMissions,agents:refreshAgents,artifacts:refreshArtifacts,audit:loadAudit,ops:refreshOps}[on]||(async()=>{}))()}catch(e){}}
+async function loadChat(){const r=await api('/chat/history');$('chat').replaceChildren(...r.messages.map(m=>el('div',{class:'msg'},el('b',{},m.sender+': '),m.body.text,m.body.source?el('span',{class:'mut'},' ['+m.body.source+']'):'')));$('chat').scrollTop=1e9}
+function J(id){try{return JSON.parse($(id).value)}catch(e){showErr('Invalid JSON in '+id);throw e}}
+$('login').onclick=async()=>{TOK=$('tok').value.trim();sessionStorage.setItem('gotham_tok',TOK);try{const k=await api('/kinds');$('who').textContent='connected';$('kind').replaceChildren(...k.kinds.map(x=>el('option',{},x)));refresh()}catch(e){$('who').textContent='not connected'}};
+$('chatsend').onclick=async()=>{const m=$('chatin').value.trim();if(!m)return;$('chatin').value='';await api('/chat',{method:'POST',body:JSON.stringify({message:m})});loadChat()};$('chatin').onkeydown=e=>{if(e.key==='Enter')$('chatsend').click()};
+$('submit').onclick=async()=>{try{await submitMission($('kind').value,$('goal').value||'Mission from command center',J('params'),$('submitmsg'));}catch(e){}};
+$('esub').onclick=()=>{const p={files:J('ef')};const pt=J('ep');if(pt&&Object.keys(pt).length)p.patch=pt;submitMission('engineering',$('eg').value,p,$('eres')).catch(()=>{})};
+$('rsub').onclick=()=>{const p={name:$('rn').value,cells:J('rc')};const t=$('rt').value.trim();if(t)p.train=J('rt');submitMission('research','Execute research notebook '+p.name,p,$('rres')).catch(()=>{})};
+$('csub').onclick=()=>submitMission('security_audit','Security audit of submitted code',{files:J('cf')},$('cres')).catch(()=>{});
+$('clsub').onclick=()=>submitMission('log_analysis','Correlate authentication log events',{files:{'auth.log':$('cl').value},log:'auth.log'},$('cres')).catch(()=>{});
+$('labsub').onclick=()=>submitMission('lab_validation','Scoped validation of the local vulnerable lab target',{},$('lres')).then(()=>refreshApprovals()).catch(()=>{});
+$('msub').onclick=()=>submitMission('malware_analysis','Analyse approved inert sample '+$('mname').value,{sample:{name:$('mname').value,content:$('mcontent').value},dynamic:$('mdyn').checked,approved_inert:true},$('lres')).catch(()=>{});
+$('arefresh').onclick=refreshArtifacts;$('auditload').onclick=loadAudit;$('irefresh').onclick=refreshOps;
+$('recover').onclick=async()=>{const r=await api('/recovery/run',{method:'POST'});$('recres').textContent=`requeued/failed ${r.recovered_tasks.length} task(s); removed ${r.stale_containers_removed} stale container(s)`};
+window.addEventListener('unhandledrejection',e=>{});setInterval(()=>{if(document.visibilityState==='visible')refresh()},5000);
+tabs();if(TOK){$('tok').value=TOK;$('login').click()}
+</script></body></html>

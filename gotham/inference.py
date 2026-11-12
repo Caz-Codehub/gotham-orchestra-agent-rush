@@ -18,6 +18,7 @@ OLLAMA_ENDPOINT = 'http://127.0.0.1:11434/api/chat'
 # One shared local model, seven roles. Serialize local completions so five workers
 # cannot simultaneously exhaust a low-RAM laptop. Worker planning remains parallel.
 _LOCAL_INFERENCE_GATE = threading.Lock()
+_TRANSPORT_AUDIT_GATE = threading.Lock()
 
 class InferenceError(RuntimeError): pass
 
@@ -47,6 +48,17 @@ class CompatibleInference:
     def chat(self, system: str, user: str, *, max_tokens: int=400, json_mode: bool=False) -> str:
         if not self.configured:
             raise InferenceError(self.provider_name + ' model is not configured')
+        from .model_policy import ModelInputDenied, screen
+        from .core.audit import AuditWriter
+        from .core.config import audit_path
+        try:
+            system, user, screening = screen(system, user)
+        except ModelInputDenied as exc:
+            with _TRANSPORT_AUDIT_GATE:
+                AuditWriter(audit_path()).record(None, None, 'InferenceGateway',
+                    'model_input_denied', {'reason': str(exc)[:100],
+                                           'provider': self.provider_name[:50]})
+            raise InferenceError('Model input denied by pre-inference policy') from exc
         with self._lock:
             if self._calls >= self.max_calls:
                 raise InferenceError('Model-call budget exhausted. No further calls issued.')
@@ -79,6 +91,20 @@ class CompatibleInference:
         else:
             request_data.update({'temperature':0.1,'max_tokens':min(2200,max(80,int(max_tokens)))})
             request_timeout = 65
+        # Final mandatory audit gate immediately before transport. This applies
+        # to legacy code paths too, not just the v4 runtime and orchestral DAG.
+        # It records hashes/metadata only; no private auditor identity enters prompts.
+        import hashlib
+        # Serialize short journal initialization+append: concurrent local
+        # completions otherwise race on SQLite journal_mode=WAL setup.
+        # Never hold this lock during network inference.
+        with _TRANSPORT_AUDIT_GATE:
+            AuditWriter(audit_path()).record(
+                None, None, 'InferenceGateway', 'pre_model_transport',
+                {'provider': self.provider_name[:50], 'model': self.model[:80],
+                 'system_sha256': hashlib.sha256(system.encode()).hexdigest(),
+                 'input_sha256': hashlib.sha256(user.encode()).hexdigest(),
+                 'local': local, 'input_screening': screening})
         headers = {'Content-Type':'application/json'}
         if self.key: headers['Authorization']='Bearer '+self.key
         req = urllib.request.Request(self.endpoint,json.dumps(request_data).encode(),headers=headers,method='POST')

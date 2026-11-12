@@ -14,3 +14,8 @@ venv/
 logs/
 artifacts/
 receipts/private/
+data/
+data-audit/
+*.executed.ipynb
+.scanners/
+handoff/

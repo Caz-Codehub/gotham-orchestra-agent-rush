@@ -1,0 +1,59 @@
+name: Gotham 4 staging package
+on:
+  push:
+    branches:
+      - 'claude/gotham-4-0-execution-8f66gu'
+    paths:
+      - 'gotham/**'
+      - 'deploy/**'
+      - 'requirements*.txt'
+      - 'tests/**'
+      - '.github/workflows/gotham-staging-package.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+# Discard obsolete checks from superseded commits, never cancel latest HEAD.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-staging-bundle:
+    name: Validate and package a rollback-safe staging release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate shell and Python syntax
+        run: |
+          bash -n deploy/stage_side_by_side.sh
+          python -m compileall -q gotham tests
+      - name: Install runtime and test dependencies
+        run: |
+          python -m pip install -q -r requirements.txt -r requirements-dev.txt
+      - name: Provision isolated Semgrep scanner for security-audit acceptance
+        run: |
+          python -m venv .scanners
+          .scanners/bin/python -m pip install -q -r requirements-scanners.txt
+          .scanners/bin/semgrep --version
+      - name: Test all non-Docker unit cases
+        env:
+          GOTHAM_RUN_DOCKER_TESTS: '0'
+        run: |
+          python -m pytest -q -ra -m 'not integration'
+      - name: Package staging source and bootstrap
+        run: |
+          mkdir -p out/gotham-v4-staging
+          git archive --format=tar HEAD | tar -xf - -C out/gotham-v4-staging
+          git rev-parse HEAD > out/gotham-v4-staging/SOURCE_COMMIT.txt
+          tar -C out -czf gotham-v4-staging.tar.gz gotham-v4-staging
+          sha256sum gotham-v4-staging.tar.gz > gotham-v4-staging.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gotham-v4-staging-${{ github.sha }}
+          path: |
+            gotham-v4-staging.tar.gz
+            gotham-v4-staging.tar.gz.sha256
+          retention-days: 14

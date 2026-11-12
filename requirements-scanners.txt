@@ -1,0 +1,3 @@
+# Installed into an ISOLATED venv (.scanners) so Semgrep's pinned transitive dependencies never enter the API/worker runtime.
+# Set GOTHAM_SEMGREP_BIN or let gotham.core.sectools find .scanners/bin/semgrep.
+semgrep>=1.100

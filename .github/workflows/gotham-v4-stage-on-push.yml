@@ -1,0 +1,128 @@
+name: Gotham 4 auto-update Vultr staging
+# Manual contingency path only; automatic staging is run from main after CI.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: gotham4-staging-update
+  cancel-in-progress: false
+jobs:
+  test-and-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: ci_tests
+        name: Compile and test before any Vultr change
+        env:
+          GOTHAM_RUN_DOCKER_TESTS: '0'
+        run: |
+          set -euo pipefail
+          bash -n deploy/persistent_stage_nonroot.sh
+          python -m compileall -q gotham
+          python -m pip install -q -r requirements.txt -r requirements-dev.txt
+          python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py tests/test_v4_agent_runtime.py
+      - id: ssh_auth
+        name: Configure approved rootless SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" || { echo 'BLOCKED: missing staging SSH credential'; exit 1; }
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os, pathlib, base64
+          raw = os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw = raw.replace('\\n', '\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('BLOCKED: incomplete SSH credential')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham > /dev/null 2>&1 || { echo 'BLOCKED: invalid SSH credential'; exit 1; }
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          OBSERVED="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          test "$OBSERVED" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024' || { echo 'BLOCKED: Vultr fingerprint changed'; exit 1; }
+          chmod 600 ~/.ssh/known_hosts
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 true
+      - id: staged_release
+        name: Upload checksummed release and update localhost staging
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          git archive --format=tar.gz -o "gotham-v4-$SHA.tar.gz" HEAD
+          sha256sum "gotham-v4-$SHA.tar.gz" > "gotham-v4-$SHA.tar.gz.sha256"
+          sshopts=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12)
+          scp "${sshopts[@]}" "gotham-v4-$SHA.tar.gz" "gotham-v4-$SHA.tar.gz.sha256" gothamdeploy@155.138.194.208:
+          ssh "${sshopts[@]}" gothamdeploy@155.138.194.208 "RELEASE_SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME"
+          sha256sum -c "gotham-v4-$RELEASE_SHA.tar.gz.sha256"
+          TARGET="$HOME/gotham-v4-staging/releases/$RELEASE_SHA"
+          if [ ! -d "$TARGET" ]; then
+            install -d -m 700 "$TARGET"
+            tar -xzf "gotham-v4-$RELEASE_SHA.tar.gz" -C "$TARGET" --no-same-owner --no-same-permissions
+          fi
+          bash "$TARGET/deploy/persistent_stage_nonroot.sh" "$TARGET"
+          rm -f "$HOME/gotham-v4-$RELEASE_SHA.tar.gz" "$HOME/gotham-v4-$RELEASE_SHA.tar.gz.sha256"
+          REMOTE
+          echo "PASS: release $SHA deployed to protected localhost-only staging; production unchanged" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish nonsecret staging deployment receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_OUTCOME: ${{ steps.ci_tests.outcome }}
+          SSH_OUTCOME: ${{ steps.ssh_auth.outcome }}
+          STAGING_OUTCOME: ${{ steps.staged_release.outcome }}
+        run: |
+          set -euo pipefail
+          export STAGED_COMMIT="$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import json,os,datetime
+          state = 'staging-healthy' if os.environ.get('STAGING_OUTCOME')=='success' else 'staging-blocked'
+          obj={
+            'state':state,
+            'ci_tests':os.environ.get('CI_OUTCOME','unknown'),
+            'ssh_auth':os.environ.get('SSH_OUTCOME','unknown'),
+            'staging_deploy':os.environ.get('STAGING_OUTCOME','unknown'),
+            'deployed_commit':os.environ['STAGED_COMMIT'],
+            'timestamp_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'host':'155.138.194.208',
+            'port':'127.0.0.1:8001',
+            'orchestras_defined':4 if state=='staging-healthy' else None,
+            'specialist_positions_defined':12 if state=='staging-healthy' else None,
+            'worker':'restricted-orchestra-only' if state=='staging-healthy' else 'not verified',
+            'production_modified':False,
+            'full_execution_verified':False,
+            'note':'Automated acceptance checked API health, role roster and worker heartbeat; model missions need separate acceptance.'
+          }
+          open('/tmp/gotham-stage-receipt.json','w').write(json.dumps(obj,indent=2)+'\n')
+          PY
+          B64="$(base64 -w0 /tmp/gotham-stage-receipt.json)"
+          PATH_IN_REPO="deployments/staging-status.json"
+          EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO?ref=$GITHUB_REF_NAME" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$EXISTING" ]; then
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO" \
+              -f message="Record verified Gotham staging release" -f content="$B64" \
+              -f branch="$GITHUB_REF_NAME" -f sha="$EXISTING" >/dev/null
+          else
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$PATH_IN_REPO" \
+              -f message="Record first verified Gotham staging release" -f content="$B64" \
+              -f branch="$GITHUB_REF_NAME" >/dev/null
+          fi
+          echo "Staging deployment result (including failures) recorded in repository; no tokens stored." >> "$GITHUB_STEP_SUMMARY"
