@@ -74,11 +74,6 @@ stop_owned() {
     for i in $(seq 1 25); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
   fi
 }
-owned_worker_pid() {
-  test -n "$1" && [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null &&
-  test -r "/proc/$1/cmdline" &&
-  tr '\0' ' ' < "/proc/$1/cmdline" | grep -q 'gotham.core.orchestra_worker'
-}
 # Only processes owned by gothamdeploy, launched from the dedicated staging
 # release tree, and running the exact restricted orchestra module are eligible.
 # Never match legacy production /opt/gotham workers or unrelated Python services.
