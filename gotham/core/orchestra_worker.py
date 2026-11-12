@@ -57,7 +57,7 @@ def run(stop: threading.Event | None = None, *, once=False, poll=0.5, engine=Non
     while not stop.is_set():
         engine.store.worker_seen(wid, os.getpid(), 1)
         task = engine.store.claim_next(wid, config.LEASE_SECONDS,
-                                     allowed_pairs=ALLOWED_PAIRS)
+                                     allowed_pairs=ALLOWED_PAIRS, mission_kinds={'orchestra'})
         if task:
             if task['kind'] not in ALLOWED_KINDS:
                 engine.audit.record(task['mission_id'], task['id'], 'Alfred',
