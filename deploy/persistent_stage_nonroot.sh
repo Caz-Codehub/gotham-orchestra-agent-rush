@@ -28,6 +28,7 @@ if [ ! -f "$ENVFILE" ]; then
     printf 'GOTHAM_OLLAMA_MODEL=qwen2.5:1.5b\n'
     printf 'GOTHAM_MAX_MODEL_CALLS=32\n'
     printf 'GOTHAM_LOCAL_CONTEXT_TOKENS=2048\n'
+    printf 'GOTHAM_LOCAL_REQUEST_TIMEOUT_SECONDS=150\n'
     printf 'GOTHAM_ALLOW_PAID_INFERENCE=NO\n'
     python3 - <<'PY'
 import secrets
@@ -35,6 +36,11 @@ for role in ("BATMAN", "OPERATOR", "VIEWER"):
     print("GOTHAM_"+role+"_TOKEN="+secrets.token_urlsafe(42))
 PY
   } > "$ENVFILE"
+fi
+# Preserve existing generated tokens and data, but add safe inference tuning
+# without overwriting or leaking any prior staging credentials.
+if ! grep -q '^GOTHAM_LOCAL_REQUEST_TIMEOUT_SECONDS=' "$ENVFILE"; then
+  printf 'GOTHAM_LOCAL_REQUEST_TIMEOUT_SECONDS=150\n' >> "$ENVFILE"
 fi
 chmod 600 "$ENVFILE"
 
