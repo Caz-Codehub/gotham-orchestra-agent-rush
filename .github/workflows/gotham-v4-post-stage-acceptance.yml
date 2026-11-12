@@ -60,6 +60,31 @@ jobs:
           bash -n "$SCRIPT"
           bash "$SCRIPT"
           REMOTE
+      - name: Copy and validate Specter chain-head checkpoint (no secrets)
+        if: success()
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            gothamdeploy@155.138.194.208:gotham-v4-staging/acceptance-audit-anchor.json \
+            ./gotham-specter-anchor.json
+          python3 - <<'PY'
+          import json,re
+          d=json.load(open('gotham-specter-anchor.json'))
+          assert d['schema']=='gotham-specter-audit-anchor-v1'
+          assert d['chain_valid'] is True and int(d['verified_events'])>0
+          assert re.fullmatch('[0-9a-f]{64}',d['head_hmac_sha256'])
+          assert re.fullmatch('[0-9a-f]{32}',d['mission_id'])
+          assert set(d)=={'schema','mission_id','head_hmac_sha256','verified_events',
+                           'chain_valid','created_utc','purpose'}
+          print('PASS: off-host chain-head checkpoint contains no private journal events or tokens')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: gotham-specter-anchor-${{ github.run_id }}
+          path: gotham-specter-anchor.json
+          retention-days: 90
+          if-no-files-found: error
       - name: Report verified synthetic analysis only
         if: success()
         run: |
