@@ -70,6 +70,8 @@ def test_service_refuses_group_readable_private_audit_key(monkeypatch, tmp_path,
         pytest.skip("directory-ownership test runs as non-root")
     for name in ("record", "verify", "audit"):
         (tmp_path / name).mkdir(mode=0o700)
+    for name in ("record", "verify"):
+        (tmp_path / name).chmod(0o2700)
     key = tmp_path / "audit" / "specter.key"
     key.write_text("fake-test-only-key", encoding="utf-8")
     key.chmod(0o640)
