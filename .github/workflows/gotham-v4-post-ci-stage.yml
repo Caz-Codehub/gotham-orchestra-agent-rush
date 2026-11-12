@@ -157,14 +157,19 @@ jobs:
           echo "Worker process count:"
           pgrep -af '[p]ython.*gotham.core.orchestra_worker' | sed -E 's@/home/[^ ]+/@~/@g' || true
           echo "Recorded worker PID: $(cat "$BASE/orchestra-worker.pid" 2>/dev/null || echo missing)"
+          ACTUAL="$(pgrep -u "$(id -u)" -fc '[p]ython.*gotham.core.orchestra_worker' || true)"
+          echo "Restricted worker process count: $ACTUAL"
+          test "$ACTUAL" = 1 || { echo "BLOCKED: expected exactly one staging orchestra worker"; exit 1; }
           echo "Configured quota keys (never print tokens):"
           grep -E '^GOTHAM_(MAX_MODEL_CALLS|ORCHESTRA_MISSION_CALL_LIMIT|INFERENCE_PROVIDER|OLLAMA_MODEL)=' "$BASE/staging.env" || true
+          cd "$BASE/current"
           "$BASE/current/.venv/bin/python" - <<'PY'
           import inspect
           from gotham.core.orchestra_worker import run
           from gotham.core.model_budget import MissionModelClient
           print("Mission budget adapter loaded:", MissionModelClient.__module__)
           print("Worker factory support:", "client_factory" in inspect.signature(run).parameters)
+          assert "client_factory" in inspect.signature(run).parameters
           PY
           REMOTE
       - name: Hold repeated automatic Qwen acceptance until runtime diagnosis clears
