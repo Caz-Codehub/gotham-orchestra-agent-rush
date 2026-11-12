@@ -26,7 +26,8 @@ if [ ! -f "$ENVFILE" ]; then
     printf 'GOTHAM_SPECTER_EXTERNAL=1\n'
     printf 'GOTHAM_INFERENCE_PROVIDER=ollama\n'
     printf 'GOTHAM_OLLAMA_MODEL=qwen2.5:1.5b\n'
-    printf 'GOTHAM_MAX_MODEL_CALLS=32\n'
+    printf 'GOTHAM_MAX_MODEL_CALLS=48\n'
+    printf 'GOTHAM_ORCHESTRA_MISSION_CALL_LIMIT=48\n'
     printf 'GOTHAM_LOCAL_CONTEXT_TOKENS=2048\n'
     printf 'GOTHAM_LOCAL_REQUEST_TIMEOUT_SECONDS=150\n'
     printf 'GOTHAM_ALLOW_PAID_INFERENCE=NO\n'
@@ -36,6 +37,14 @@ for role in ("BATMAN", "OPERATOR", "VIEWER"):
     print("GOTHAM_"+role+"_TOKEN="+secrets.token_urlsafe(42))
 PY
   } > "$ENVFILE"
+fi
+# Only upgrade the previous Gotham-generated 32-call CPU-local default.
+# Preserve all other explicit budget choices and all staging secrets.
+if grep -qx 'GOTHAM_MAX_MODEL_CALLS=32' "$ENVFILE"; then
+  sed -i 's/^GOTHAM_MAX_MODEL_CALLS=32$/GOTHAM_MAX_MODEL_CALLS=48/' "$ENVFILE"
+fi
+if ! grep -q '^GOTHAM_ORCHESTRA_MISSION_CALL_LIMIT=' "$ENVFILE"; then
+  printf 'GOTHAM_ORCHESTRA_MISSION_CALL_LIMIT=48\n' >> "$ENVFILE"
 fi
 # Preserve existing generated tokens and data, but add safe inference tuning
 # without overwriting or leaking any prior staging credentials.
