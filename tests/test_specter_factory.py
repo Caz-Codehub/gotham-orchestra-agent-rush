@@ -52,7 +52,10 @@ def test_full_bounded_orchestra_uses_socket_writer_and_batman_reader(isolated_jo
     assert mission["status"] == "completed_unverified", mission["result"]
     report = audit_reader(isolated_journal).verify()
     assert report["valid"] is True and report["checked"] > 0
-    assert len(audit_reader(isolated_journal).events(mid)) > 0
+    events = audit_reader(isolated_journal).events(mid)
+    assert len(events) > 0
+    assert any(e["action"] == "mission_submitted" and e["actor"] == "Alfred" for e in events)
+    assert not any(e["actor"] == "Batman" for e in events)
     assert model.calls == 6
     assert not hasattr(engine.audit, "verify")
     assert AuditReader(isolated_journal).verify()["head"] == report["head"]
