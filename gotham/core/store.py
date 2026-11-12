@@ -346,6 +346,39 @@ class Store:
                           (task_id, action)).fetchone()
         return bool(r)
 
+    def reserve_model_call(self, mission_id: str, limit: int) -> tuple[bool, int]:
+        """Atomically reserve one inference attempt against a durable mission quota.
+
+        A reservation is not refunded after a timeout, failed JSON or restart.
+        Separate workers/processes cannot race beyond this cap.
+        """
+        if not isinstance(limit, int) or not 1 <= limit <= 64:
+            raise ValueError('model call limit must be between 1 and 64')
+        with self._conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                row = c.execute(
+                    "SELECT kind FROM missions WHERE id=?", (mission_id,)
+                ).fetchone()
+                if not row or row['kind'] != 'orchestra':
+                    raise ValueError('model reservation requires an existing orchestra mission')
+                spent = int(c.execute(
+                    "SELECT COUNT(*) FROM usage WHERE mission_id=? AND kind='orchestra_model_call_reserved'",
+                    (mission_id,)
+                ).fetchone()[0])
+                if spent >= limit:
+                    c.execute('COMMIT')
+                    return False, spent
+                c.execute(
+                    'INSERT INTO usage(mission_id,task_id,kind,amount,ts) VALUES(?,?,?,?,?)',
+                    (mission_id, None, 'orchestra_model_call_reserved', 1, time.time())
+                )
+                c.execute('COMMIT')
+                return True, spent + 1
+            except Exception:
+                c.execute('ROLLBACK')
+                raise
+
     def add_usage(self, mission_id, task_id, kind, amount):
         with self._conn() as c:
             c.execute('INSERT INTO usage(mission_id,task_id,kind,amount,ts) VALUES(?,?,?,?,?)',
