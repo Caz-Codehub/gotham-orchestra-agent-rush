@@ -21,6 +21,31 @@ from .audit import AuditWriter, AuditReader
 MAX_RECORD_BYTES = 32768
 HASH = re.compile(r"^[0-9a-f]{64}$")
 
+# Never accept entire prompts, token values or raw secrets as audit metadata.
+# Credential-shaped values are additionally redacted by AuditWriter.
+PROHIBITED_METADATA_KEYS = frozenset({
+    "system_prompt", "user_prompt", "raw_prompt", "full_prompt",
+    "raw_input", "api_key", "private_key", "password",
+    "authorization", "bearer_token", "access_token", "secret_token",
+})
+
+
+def _safe_metadata_tree(obj, depth=0) -> bool:
+    if depth > 8:
+        return False
+    if isinstance(obj, dict):
+        return len(obj) <= 80 and all(
+            isinstance(k, str) and k.lower() not in PROHIBITED_METADATA_KEYS
+            and len(k) <= 128 and _safe_metadata_tree(v, depth + 1)
+            for k, v in obj.items()
+        )
+    if isinstance(obj, list):
+        return len(obj) <= 100 and all(_safe_metadata_tree(v, depth + 1) for v in obj)
+    return obj is None or isinstance(obj, (bool, int, float)) or (
+        isinstance(obj, str) and len(obj) <= 4096
+    )
+
+
 
 class SpecterTransportError(RuntimeError):
     """A missing/denied/invalid audit transport must block model or tool calls."""
@@ -38,6 +63,8 @@ class SpecterWriteClient:
             raise SpecterTransportError("invalid auditor event identifiers")
         if not 1 <= len(actor) <= 128 or not 1 <= len(action) <= 128:
             raise SpecterTransportError("auditor event identifiers exceed policy")
+        if not _safe_metadata_tree(detail or {}):
+            raise SpecterTransportError("audit event contains disallowed raw secret or prompt fields")
         msg = {"op": "record", "mission_id": mission_id, "task_id": task_id,
                "actor": actor, "action": action, "detail": detail or {}}
         try:
@@ -86,8 +113,8 @@ class _RecordHandler(socketserver.StreamRequestHandler):
                 raise SpecterTransportError("invalid metadata")
             if not 1 <= len(d["actor"]) <= 128 or not 1 <= len(d["action"]) <= 128:
                 raise SpecterTransportError("invalid event identifiers")
-            if not isinstance(d["detail"], dict):
-                raise SpecterTransportError("audit detail must be a JSON object")
+            if not isinstance(d["detail"], dict) or not _safe_metadata_tree(d["detail"]):
+                raise SpecterTransportError("audit metadata policy rejected event")
             # Use a single journal writer and serialize the short append transaction.
             with parent.write_gate:
                 digest = parent.writer.record(d["mission_id"], d["task_id"],
