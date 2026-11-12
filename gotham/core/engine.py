@@ -83,7 +83,7 @@ class Alfred:
         mid = self.store.create_mission(kind, goal.strip(), params, requested_by, idem_key=idem_key)
         if self.store.tasks_for(mid):  # idempotent resubmission
             return mid
-        self.audit.record(mid, None, 'Batman', 'mission_authorized',
+        self.audit.record(mid, None, 'Alfred', 'mission_submitted',
                           {'requested_by': requested_by, 'kind': kind, 'goal_sha256': hashlib.sha256(goal.encode()).hexdigest(),
                            'goal_preview': goal[:200], 'params_sha256': _digest(params)})
         try:
@@ -279,7 +279,7 @@ class Alfred:
         for t in self.store.tasks_for(mid):
             if t['status'] == 'running':
                 killed += len(sbx.remove_task_containers(t['id']))
-        self.audit.record(mid, None, 'Batman', 'cancel_requested', {'by': by, 'containers_killed': killed})
+        self.audit.record(mid, None, 'Alfred', 'cancel_requested', {'by': by, 'containers_killed': killed})
         self.advance(mid)
 
     def advance(self, mid: str) -> None:
