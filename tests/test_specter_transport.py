@@ -110,3 +110,20 @@ def test_auditor_rejects_raw_prompts_and_credentials_before_journaling(sidecar, 
     with pytest.raises(SpecterTransportError, match="disallowed"):
         client.record("mission", "task", "Alfred", "pre_model_gate", sensitive)
     assert AuditReader(journal).verify()["checked"] == 0
+
+
+def test_recorded_peer_uid_is_kernel_derived_and_batman_actor_cannot_be_forged(sidecar):
+    import os
+    _, client, journal = sidecar
+    with pytest.raises(SpecterTransportError, match="refused"):
+        client.record("mission", "task", "Batman", "approval_decided", {"approved": True})
+    with pytest.raises(SpecterTransportError, match="disallowed"):
+        client.record("mission", "task", "Alfred", "pre_model_gate",
+                      {"_specter_peer_uid": 1})
+    digest = client.record("mission", "task", "Alfred", "pre_model_gate",
+                           {"input_sha256": "b" * 64})
+    reader = AuditReader(journal)
+    entries = reader.events("mission")
+    assert len(entries) == 1
+    assert entries[0]["detail"]["_specter_peer_uid"] == os.getuid()
+    assert reader.verify()["head"] == digest
