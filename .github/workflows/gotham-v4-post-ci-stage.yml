@@ -147,13 +147,29 @@ jobs:
               json.dump(obj,out,indent=2)
           print("Staging status:",state,"CI:",obj["ci_tests"],"SSH:",obj["ssh_auth"],"install:",obj["staging_deploy"])
           PY
-      - name: Start real Qwen full-orchestra acceptance after successful staging
+      - name: Report remote staging worker diagnostics (no secrets)
         if: ${{ steps.staged_release.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run gotham-v4-post-stage-acceptance.yml --ref main -f confirmation=RUN_SYNTHETIC_12
-          echo "Triggered real Qwen acceptance. No separate user action required." >> "$GITHUB_STEP_SUMMARY"
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes gothamdeploy@155.138.194.208 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          BASE="$HOME/gotham-v4-staging"
+          echo "Current release: $(readlink -f "$BASE/current")"
+          echo "Worker process count:"
+          pgrep -af '[p]ython.*gotham.core.orchestra_worker' | sed -E 's@/home/[^ ]+/@~/@g' || true
+          echo "Recorded worker PID: $(cat "$BASE/orchestra-worker.pid" 2>/dev/null || echo missing)"
+          echo "Configured quota keys (never print tokens):"
+          grep -E '^GOTHAM_(MAX_MODEL_CALLS|ORCHESTRA_MISSION_CALL_LIMIT|INFERENCE_PROVIDER|OLLAMA_MODEL)=' "$BASE/staging.env" || true
+          "$BASE/current/.venv/bin/python" - <<'PY'
+          import inspect
+          from gotham.core.orchestra_worker import run
+          from gotham.core.model_budget import MissionModelClient
+          print("Mission budget adapter loaded:", MissionModelClient.__module__)
+          print("Worker factory support:", "client_factory" in inspect.signature(run).parameters)
+          PY
+          REMOTE
+      - name: Hold repeated automatic Qwen acceptance until runtime diagnosis clears
+        if: ${{ steps.staged_release.outcome == 'success' }}
+        run: echo "Stage deployed; real acceptance intentionally paused until worker-process isolation is verified." >> "$GITHUB_STEP_SUMMARY"
       - name: Save staging receipt as a GitHub Actions artifact
         if: always()
         uses: actions/upload-artifact@v4
