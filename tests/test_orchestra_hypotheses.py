@@ -45,6 +45,7 @@ def test_h0_each_orchestra_has_registered_executable_playbook_and_approval(domai
     assert (task["agent"], task["kind"]) == EXPECTED[domain]
     assert (task["agent"], task["kind"]) in PLAYBOOKS
     assert task["risk"] == "high"
+    assert task["tools"] == (["lab_start", "lab_probe", "lab_stop"] if domain == "lab" else [])
     assert task["after"] == [domain + ":review"]
     assert plan[-1]["agent"] == "Alfred"
     assert plan[-1]["after"] == [domain + ":evidence"]
@@ -57,6 +58,7 @@ def test_h0_each_orchestra_has_registered_executable_playbook_and_approval(domai
     pending = engine.store.approvals(mission_id=mid)
     assert len(pending) == 1
     assert pending[0]["action"] == "task_start" and pending[0]["status"] == "pending"
+    assert pending[0]["detail"]["tools"] == task["tools"]
 
 
 @pytest.mark.parametrize("domain,bad_workload", [
