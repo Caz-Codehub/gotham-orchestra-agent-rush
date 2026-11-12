@@ -79,11 +79,43 @@ owned_worker_pid() {
   test -r "/proc/$1/cmdline" &&
   tr '\0' ' ' < "/proc/$1/cmdline" | grep -q 'gotham.core.orchestra_worker'
 }
+# Only processes owned by gothamdeploy, launched from the dedicated staging
+# release tree, and running the exact restricted orchestra module are eligible.
+# Never match legacy production /opt/gotham workers or unrelated Python services.
+owned_worker_pid() {
+  local pid="$1" exe module
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  test -r "/proc/$pid/cmdline" || return 1
+  exe="$(tr '\0' '\n' < "/proc/$pid/cmdline" | sed -n '1p')"
+  module="$(tr '\0' '\n' < "/proc/$pid/cmdline" | sed -n '3p')"
+  case "$exe" in
+    "$BASE"/releases/*/.venv/bin/python) ;;
+    *) return 1 ;;
+  esac
+  test "$module" = 'gotham.core.orchestra_worker'
+}
 stop_owned_worker() {
   if owned_worker_pid "$1"; then
     kill "$1"
     for i in $(seq 1 25); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
+    if kill -0 "$1" 2>/dev/null; then
+      echo "BLOCKED: restricted staging worker $1 has not terminated" >&2
+      return 1
+    fi
   fi
+}
+reap_orphan_staging_workers() {
+  local pid count=0
+  while read -r pid; do
+    [ -n "$pid" ] || continue
+    if owned_worker_pid "$pid"; then
+      echo "Stopping duplicate old staging-only orchestra worker PID $pid"
+      stop_owned_worker "$pid"
+      count=$((count+1))
+    fi
+  done < <(pgrep -u "$(id -u)" -f 'gotham.core.orchestra_worker' || true)
+  echo "PASS: stale staging-only worker cleanup; matched $count"
 }
 launch_worker() {
   local dir="$1"
@@ -164,6 +196,9 @@ if [ -n "$old_worker_pid" ] && ! owned_worker_pid "$old_worker_pid"; then
   exit 2
 fi
 if [ -n "$old_worker_pid" ]; then stop_owned_worker "$old_worker_pid"; fi
+# A previous deployment can leave behind a process no longer present in PIDFILE.
+# Kill only the exact module launched from our own staging release tree.
+reap_orphan_staging_workers
 if [ -n "$old_pid" ]; then stop_owned "$old_pid"; fi
 if launch_release "$SRC" && launch_worker "$SRC" && accept_orchestra; then
   ln -sfn "$SRC" "$BASE/current.new"
