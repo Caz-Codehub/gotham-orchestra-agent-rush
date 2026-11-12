@@ -69,7 +69,6 @@ anchor={
 }
 with open(sys.argv[2],"w") as f:
     json.dump(anchor,f,sort_keys=True,indent=2)
-    f.write("\\n")
 ' "$mid" "$BASE/acceptance-audit-anchor.json"
 chmod 600 "$BASE/acceptance-audit-anchor.json"
 test "$(systemctl is-active gotham)" = active
