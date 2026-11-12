@@ -27,6 +27,7 @@ PROHIBITED_METADATA_KEYS = frozenset({
     "system_prompt", "user_prompt", "raw_prompt", "full_prompt",
     "raw_input", "api_key", "private_key", "password",
     "authorization", "bearer_token", "access_token", "secret_token",
+    "_specter_peer_uid",
 })
 
 
@@ -115,10 +116,15 @@ class _RecordHandler(socketserver.StreamRequestHandler):
                 raise SpecterTransportError("invalid event identifiers")
             if not isinstance(d["detail"], dict) or not _safe_metadata_tree(d["detail"]):
                 raise SpecterTransportError("audit metadata policy rejected event")
-            # Use a single journal writer and serialize the short append transaction.
+            # The worker's record-only socket must not impersonate Batman.
+            # Batman approvals need a separately authenticated control path.
+            if d["actor"].casefold() == "batman":
+                raise SpecterTransportError("worker may not forge Batman actor")
+            # Record peer UID obtained from the kernel; the caller cannot spoof it.
+            authenticated_detail = {**d["detail"], "_specter_peer_uid": uid}
             with parent.write_gate:
                 digest = parent.writer.record(d["mission_id"], d["task_id"],
-                                              d["actor"], d["action"], d["detail"])
+                                              d["actor"], d["action"], authenticated_detail)
             reply = {"ok": True, "hash": digest}
         except Exception:
             reply = {"ok": False, "error": "denied"}
