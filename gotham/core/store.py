@@ -175,18 +175,20 @@ class Store:
             rows = c.execute('SELECT * FROM tasks WHERE mission_id=? ORDER BY seq', (mission_id,)).fetchall()
         return [self._task(r) for r in rows]
 
-    def claim_next(self, worker_id, lease_s, agents=None, allowed_pairs=None) -> dict | None:
+    def claim_next(self, worker_id, lease_s, agents=None, allowed_pairs=None, mission_kinds=None) -> dict | None:
         """Atomically claim one runnable task (all dependencies succeeded, mission not cancelled)."""
         with self._conn() as c:
             c.execute('BEGIN IMMEDIATE')
             try:
-                rows = c.execute("SELECT t.* FROM tasks t JOIN missions m ON m.id=t.mission_id "
+                rows = c.execute("SELECT t.*, m.kind AS mission_kind FROM tasks t JOIN missions m ON m.id=t.mission_id "
                                  "WHERE t.status='pending' AND m.cancel_requested=0 ORDER BY t.created, t.seq").fetchall()
                 for r in rows:
                     t = self._task(r)
                     if agents and t['agent'] not in agents:
                         continue
                     if allowed_pairs is not None and (t['agent'], t['kind']) not in allowed_pairs:
+                        continue
+                    if mission_kinds is not None and r['mission_kind'] not in mission_kinds:
                         continue
                     deps = t['depends'] or []
                     if deps:
