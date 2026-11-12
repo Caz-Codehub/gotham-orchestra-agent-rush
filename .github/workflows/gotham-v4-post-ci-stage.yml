@@ -64,7 +64,7 @@ jobs:
           bash -n deploy/persistent_stage_nonroot.sh
           python -m compileall -q gotham
           python -m pip install -q -r requirements.txt -r requirements-dev.txt
-          python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py tests/test_v4_agent_runtime.py
+          python -m pytest -q -ra tests/test_orchestra_durable.py tests/test_gotham_architecture_contract.py tests/test_orchestras.py tests/test_v4_agent_runtime.py tests/test_orchestra_hypotheses.py tests/test_inference_audit_gate.py tests/test_model_policy.py
       - id: ssh_auth
         name: Configure approved rootless SSH
         env:
