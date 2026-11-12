@@ -210,7 +210,7 @@ def execute(ctx, params: dict, client) -> dict:
             "You are central Captain Alfred. Synthesize captain analyses and only the "
             "provided tool receipts, if any. Reports without execution receipts are "
             "analysis-only. Never claim deployment or unrestricted tool execution. "
-            "Return JSON with summary and limitations.",
+            "Return compact JSON {\"summary\":\"brief evidence-grounded synthesis\",\"limitations\":[]}.",
             {"goal": params["goal"], "captains": [{"name": e["captain"],
               "orchestra": e["orchestra"], "receipt": e["model_sha256"]} for e in evidence],
              "approved_tool_receipts": execution_evidence},
@@ -313,7 +313,8 @@ def execute(ctx, params: dict, client) -> dict:
         out, digest = _invoke(ctx, client, spec["captain"],
             f"You are {spec['captain']} reporting to Alfred. Summarize these three "
             "specialist reports without treating analysis as executed evidence. "
-            "Return JSON with summary and limitations. Do not authorize deployments.",
+            "Return compact JSON {\"summary\":\"brief evidence-grounded synthesis\",\"limitations\":[]}. "
+            "Summary must be nonempty. Do not authorize deployments.",
             {"goal": goal, "reports": reports}, max_tokens=700)
         if not isinstance(out.get("summary"), str) or not out["summary"].strip():
             raise OrchestraBlocked("captain review summary missing")
