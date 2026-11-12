@@ -25,7 +25,7 @@ The current all-in-one `gothamdeploy` staging service **does not meet this isola
 
 ## Mandatory acceptance challenges
 
-- Wrong peer UID cannot write or read; the worker cannot inspect the verifier socket, and the Batman API cannot write via record socket.
+- Wrong peer UID cannot write or read; the worker cannot inspect the verifier socket, and the Batman API cannot write via record socket. Worker events must carry the kernel-derived peer UID, and forged \`Batman\` actor events must be rejected. Batman approval decisions require a separately authenticated and auditable control path, not worker-written metadata.
 - Auditor is killed during a mission: no new model HTTP call, tool invocation, or successful mission receipt after the failed audit acknowledgment.
 - Concurrent write receipts remain HMAC-chain valid; no private event payload/HMAC key reaches specialist prompts or GitHub artifacts.
 - A complete 21-task live local-Qwen mission succeeds with the sidecar, while its reader verifies the chain and compares the external chain-head checkpoint.
