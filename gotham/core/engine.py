@@ -33,7 +33,7 @@ def _digest(obj) -> str:
 def verify_artifact_integrity(artifacts: list[dict], root: Path) -> list[dict]:
     """Independently rehash emitted files; never trust artifact metadata alone.
 
-    Host-side files must stay within the mission workspace. Existing receipts
+    Published files must stay within the mission's dedicated artifact directory. Existing receipts
     remain valid only while their actual content and recorded size match.
     """
     root = root.resolve()
@@ -318,7 +318,7 @@ class Alfred:
         tasks = self.store.tasks_for(mid)
         checks = verify_tasks(tasks)
         arts = self.store.artifacts_for(mid)
-        checks.extend(verify_artifact_integrity(arts, config.workspaces_dir() / mid))
+        checks.extend(verify_artifact_integrity(arts, config.artifacts_dir() / mid))
         all_ok = bool(checks) and all(c['pass'] for c in checks)
         report = {'mission_id': mid, 'kind': m['kind'], 'goal': m['goal'], 'verified': all_ok, 'checks': checks,
                   'tasks': [{'id': t['id'], 'agent': t['agent'], 'kind': t['kind'], 'status': t['status'], 'attempts': t['attempts'],
