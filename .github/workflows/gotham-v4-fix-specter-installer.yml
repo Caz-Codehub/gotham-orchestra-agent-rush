@@ -13,13 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 73ccd664801a57082fbb4998c4cbb5d72713fd49
+          ref: 91bc025504232bc1474eadd50e003fa291c5a4b2
           persist-credentials: false
           fetch-depth: 0
       - name: Verify changed installer against immutable archive before transfer
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 73ccd664801a57082fbb4998c4cbb5d72713fd49
+          test "$(git rev-parse HEAD)" = 91bc025504232bc1474eadd50e003fa291c5a4b2
           bash -n deploy/install_specter_canary_admin.sh
           git archive --format=tar.gz -o /tmp/specter-source-original.tar.gz 9fa94e46fda1e0cdc043894756795cc61f73190f gotham/
           echo "9071f597cf3da02ae24681bf35bba91f043987cd26aa73c3c4224d16d9fef666  /tmp/specter-source-original.tar.gz" | sha256sum -c -
@@ -89,7 +89,7 @@ jobs:
       - name: Upload immutable fixed script only; no execution
         run: |
           set -euo pipefail
-          NAME=install_specter_canary_admin-73ccd664801a57082fbb4998c4cbb5d72713fd49.sh
+          NAME=install_specter_canary_admin-91bc025504232bc1474eadd50e003fa291c5a4b2.sh
           DIGEST="$(sha256sum deploy/install_specter_canary_admin.sh | awk '{print $1}')"
           OPT=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
           scp "${OPT[@]}" deploy/install_specter_canary_admin.sh gothamdeploy@155.138.194.208:gotham-v4-admin/"$NAME"
