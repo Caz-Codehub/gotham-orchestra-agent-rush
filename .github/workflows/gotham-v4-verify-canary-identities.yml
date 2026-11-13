@@ -1,0 +1,76 @@
+name: Gotham 4 verify isolated canary identities (read-only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/gotham-v4-verify-canary-identities.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Configure pinned SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEPLOY_KEY"
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os,pathlib,base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('invalid private key format')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          test "$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1{print $2}')" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024'
+      - name: Confirm real OS ownership and no privileged memberships
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 gothamdeploy@155.138.194.208 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          for u in gothamspecter gothamworker gothambatmanapi gothamsandbox; do
+            getent passwd "$u" >/dev/null || { echo "FAIL missing service identity: $u"; exit 1; }
+            test "$(id -u "$u")" -ne 0
+            for forbidden in docker sudo wheel adm; do
+              if id -nG "$u" | tr ' ' '\n' | grep -qx "$forbidden"; then
+                echo "FAIL forbidden group on $u"; exit 1
+              fi
+            done
+          done
+          a="$(id -u gothamspecter)"
+          b="$(id -u gothamworker)"
+          c="$(id -u gothambatmanapi)"
+          d="$(id -u gothamsandbox)"
+          test "$(printf '%s\n' "$a" "$b" "$c" "$d" | sort -u | wc -l)" -eq 4
+          id -nG gothamworker | tr ' ' '\n' | grep -qx gotham-specter-record
+          id -nG gothambatmanapi | tr ' ' '\n' | grep -qx gotham-specter-verify
+          if id -nG gothamworker | tr ' ' '\n' | grep -qx gotham-specter-verify; then exit 1; fi
+          if id -nG gothambatmanapi | tr ' ' '\n' | grep -qx gotham-specter-record; then exit 1; fi
+          dir=/var/lib/gotham-v4-canary/specter
+          test "$(stat -c '%a' "$dir/journal")" = 700
+          test "$(stat -c '%a' "$dir/record")" = 2710
+          test "$(stat -c '%a' "$dir/verify")" = 2710
+          test "$(stat -c '%U:%G' "$dir/record")" = gothamspecter:gotham-specter-record
+          test "$(stat -c '%U:%G' "$dir/verify")" = gothamspecter:gotham-specter-verify
+          test "$(stat -c '%a' /var/lib/gotham-v4-canary/sandbox)" = 700
+          test "$(systemctl is-active gotham.service)" = active
+          echo 'PASS: four real distinct OS identities, isolated groups, private directories and active production'
+          echo 'PASS: no privileged Docker/sudo memberships and no services changed'
+          REMOTE
