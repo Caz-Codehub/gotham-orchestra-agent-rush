@@ -81,8 +81,9 @@ jobs:
           DIGEST="$(sha256sum "$FILE" | awk '{print $1}')"
           CMD=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12)
           ssh "${CMD[@]}" gothamdeploy@155.138.194.208 'install -d -m 700 "$HOME/gotham-v4-admin"'
-          scp "${CMD[@]}" "$FILE" deploy/install_specter_canary_admin.sh gothamdeploy@155.138.194.208:gotham-v4-admin/
-          ssh "${CMD[@]}" gothamdeploy@155.138.194.208 "test \$(sha256sum \$HOME/gotham-v4-admin/$FILE | awk '{print \$1}') = '$DIGEST'; chmod 600 \$HOME/gotham-v4-admin/$FILE \$HOME/gotham-v4-admin/install_specter_canary_admin.sh"
+          scp "${CMD[@]}" "$FILE" gothamdeploy@155.138.194.208:gotham-v4-admin/
+          scp "${CMD[@]}" deploy/install_specter_canary_admin.sh gothamdeploy@155.138.194.208:gotham-v4-admin/install_specter_canary_admin-$SHA.sh
+          ssh "${CMD[@]}" gothamdeploy@155.138.194.208 "test \$(sha256sum \$HOME/gotham-v4-admin/$FILE | awk '{print \$1}') = '$DIGEST'; chmod 600 \$HOME/gotham-v4-admin/$FILE \$HOME/gotham-v4-admin/install_specter_canary_admin-$SHA.sh"
           echo "PASS: pinned Specter canary archive staged, no service started"
           echo "SOURCE_COMMIT=$SHA"
           echo "CANARY_ARCHIVE_SHA256=$DIGEST"
