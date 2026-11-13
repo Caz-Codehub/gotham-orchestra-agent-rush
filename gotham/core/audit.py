@@ -162,3 +162,31 @@ class AuditReader(_Journal):
         return {'mission_id': mission_id, 'event_count': len(ev), 'tool_calls': len(tools),
                 'policy_violations': violations, 'integrity': self.verify(),
                 'actors': sorted({e['actor'] for e in ev}), 'events': ev}
+
+
+
+def audit_writer(path):
+    """Return the recorded-authority writer. Never silently downgrade IPC to local.
+
+    The socket mode is an explicit opt-in for a separately provisioned auditor.
+    Legacy same-process mode is preserved until staging has distinct OS identities.
+    """
+    endpoint = os.environ.get("GOTHAM_SPECTER_RECORD_SOCKET", "").strip()
+    if endpoint:
+        from .specter_transport import SpecterWriteClient
+        return SpecterWriteClient(endpoint)
+    if os.environ.get("GOTHAM_REQUIRE_INDEPENDENT_SPECTER") == "1":
+        raise RuntimeError("independent Specter writer is required but no record socket was configured")
+    return AuditWriter(path)
+
+
+def audit_reader(path):
+    """Select Batman's separate authenticated IPC reader when configured."""
+    endpoint = os.environ.get("GOTHAM_SPECTER_VERIFY_SOCKET", "").strip()
+    if endpoint:
+        from .specter_transport import SpecterReadClient
+        return SpecterReadClient(endpoint)
+    if (os.environ.get("GOTHAM_REQUIRE_INDEPENDENT_SPECTER") == "1"
+            or os.environ.get("GOTHAM_SPECTER_RECORD_SOCKET", "").strip()):
+        raise RuntimeError("independent Specter reader required; local journal fallback denied")
+    return AuditReader(path)

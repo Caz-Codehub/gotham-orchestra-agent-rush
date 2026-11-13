@@ -25,6 +25,9 @@ jobs:
           .scanners/bin/pip install -q -r requirements-scanners.txt
       - name: Unit, API and policy tests (no Docker images required)
         run: python -m pytest -q -m "not integration and not docker and not research"
+      - name: Challenge Specter isolation with actual different Linux UIDs (ephemeral runner only)
+        run: |
+          sudo "$(command -v python)" -m pytest -q tests/test_specter_real_uid.py
       - name: Pull constrained sandbox image (legacy tests)
         run: for i in 1 2 3; do docker pull python:3.12-alpine && break; sleep $((i*15)); done; docker image inspect python:3.12-alpine
       - name: Run legacy Docker containment tests
