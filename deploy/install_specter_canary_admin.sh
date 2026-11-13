@@ -48,7 +48,7 @@ with tarfile.open(sys.argv[1],'r:gz') as t:
         # Git archives include a legitimate top-level "gotham/" directory.
         # Admit that exact directory and ordinary descendants; reject absolute
         # paths, traversal, empty components, links and special file types.
-        if m.name == 'gotham/' and m.isdir():
+        if m.name in ('gotham', 'gotham/') and m.isdir():
             continue
         if not m.name.startswith('gotham/') or '..' in p or '.' in p or '' in p or not (m.isdir() or m.isfile()):
             raise SystemExit('unsafe canary bundle')
