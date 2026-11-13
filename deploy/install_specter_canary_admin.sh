@@ -44,7 +44,7 @@ with tarfile.open(sys.argv[1],'r:gz') as t:
     entries=t.getmembers()
     if not entries: raise SystemExit('empty canary bundle')
     for m in entries:
-        p=m.name.split('/')
+        p=m.name.rstrip('/').split('/')
         if not m.name.startswith('gotham/') or '..' in p or '.' in p or '' in p or not (m.isdir() or m.isfile()):
             raise SystemExit('unsafe canary bundle')
     need={'gotham/core/specter_service.py','gotham/core/specter_transport.py','gotham/core/audit.py'}
