@@ -33,6 +33,21 @@ jobs:
           p=subprocess.run([sys.executable,'-c',validator,
                             '/tmp/specter-source-original.tar.gz'],
                            text=True,capture_output=True,timeout=20)
+          if p.returncode:
+              import tarfile
+              with tarfile.open('/tmp/specter-source-original.tar.gz','r:gz') as t:
+                  for m in t:
+                      parts=m.name.rstrip('/').split('/')
+                      bad=(m.name!='gotham/' or not m.isdir()) and (
+                          not m.name.startswith('gotham/') or '..' in parts or
+                          '.' in parts or '' in parts or
+                          not (m.isdir() or m.isfile()))
+                      if bad:
+                          print('REJECTED_ARCHIVE_ENTRY='+repr({
+                              'name':m.name,'kind':m.type.decode('ascii','replace'),
+                              'mode':oct(m.mode),'isdir':m.isdir(),'isfile':m.isfile()}))
+                          break
+              raise AssertionError((p.stdout,p.stderr))
           assert p.returncode==0,(p.stdout,p.stderr)
           assert 'PASS: source archive verified' in p.stdout
           print('PASS: previously rejected Git archive accepted by exact fixed validator')
