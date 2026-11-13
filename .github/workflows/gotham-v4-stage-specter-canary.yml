@@ -13,14 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: d8cc9455d1dbdd3b789831779eeb8eb3b9c91a0d
+          ref: 9fa94e46fda1e0cdc043894756795cc61f73190f
           persist-credentials: false
       - name: Check exact reviewed source and both CI quality gates
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          SOURCE=d8cc9455d1dbdd3b789831779eeb8eb3b9c91a0d
+          SOURCE=9fa94e46fda1e0cdc043894756795cc61f73190f
           test "$(git rev-parse HEAD)" = "$SOURCE"
           bash -n deploy/install_specter_canary_admin.sh
           python3 -m compileall -q gotham/core
@@ -75,7 +75,7 @@ jobs:
       - name: Upload exact canary source and installer; do not run root commands
         run: |
           set -euo pipefail
-          SHA=d8cc9455d1dbdd3b789831779eeb8eb3b9c91a0d
+          SHA=9fa94e46fda1e0cdc043894756795cc61f73190f
           FILE="specter-canary-$SHA.tar.gz"
           git archive --format=tar.gz -o "$FILE" HEAD gotham/
           DIGEST="$(sha256sum "$FILE" | awk '{print $1}')"
