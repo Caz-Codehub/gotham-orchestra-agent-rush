@@ -1,0 +1,86 @@
+name: Gotham 4 deliver fixed Specter installer (upload only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/gotham-v4-fix-specter-installer.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 73ccd664801a57082fbb4998c4cbb5d72713fd49
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify changed installer against immutable archive before transfer
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 73ccd664801a57082fbb4998c4cbb5d72713fd49
+          bash -n deploy/install_specter_canary_admin.sh
+          git archive --format=tar.gz -o /tmp/specter-source-original.tar.gz 9fa94e46fda1e0cdc043894756795cc61f73190f gotham/
+          echo "9071f597cf3da02ae24681bf35bba91f043987cd26aa73c3c4224d16d9fef666  /tmp/specter-source-original.tar.gz" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,sys
+          script=Path("deploy/install_specter_canary_admin.sh").read_text()
+          prefix='python3 - "$ARCHIVE" <<\'PY\'\n'
+          assert script.count(prefix)==1
+          validator=script.split(prefix,1)[1].split('\nPY\n',1)[0]
+          p=subprocess.run([sys.executable,'-c',validator,
+                            '/tmp/specter-source-original.tar.gz'],
+                           text=True,capture_output=True,timeout=20)
+          assert p.returncode==0,(p.stdout,p.stderr)
+          assert 'PASS: source archive verified' in p.stdout
+          print('PASS: previously rejected Git archive accepted by exact fixed validator')
+          PY
+          if bash deploy/install_specter_canary_admin.sh 2>&1 | grep -q '^BLOCKED: run as root'; then
+            echo 'PASS: root-only gate remains active'
+          else
+            echo 'BLOCKED: root-only gate failed'; exit 1
+          fi
+      - name: Configure previously pinned host SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEPLOY_KEY"
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os,pathlib,base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('invalid SSH key')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          test "$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1{print $2}')" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024'
+      - name: Upload immutable fixed script only; no execution
+        run: |
+          set -euo pipefail
+          NAME=install_specter_canary_admin-73ccd664801a57082fbb4998c4cbb5d72713fd49.sh
+          DIGEST="$(sha256sum deploy/install_specter_canary_admin.sh | awk '{print $1}')"
+          OPT=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp "${OPT[@]}" deploy/install_specter_canary_admin.sh gothamdeploy@155.138.194.208:gotham-v4-admin/"$NAME"
+          ssh "${OPT[@]}" gothamdeploy@155.138.194.208 "test \$(sha256sum \$HOME/gotham-v4-admin/$NAME | awk '{print \$1}') = '$DIGEST' && chmod 600 \$HOME/gotham-v4-admin/$NAME"
+          echo 'PASS: corrected script uploaded, hash verified, no privileged execution'
+          echo "INSTALLER_NAME=$NAME"
+          echo "INSTALLER_SHA256=$DIGEST"
+          echo "CANARY_ARCHIVE_SHA256=9071f597cf3da02ae24681bf35bba91f043987cd26aa73c3c4224d16d9fef666"
+          echo "INSTALLER_SHA256=$DIGEST" >> "$GITHUB_STEP_SUMMARY"
