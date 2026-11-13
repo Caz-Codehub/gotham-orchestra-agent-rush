@@ -45,6 +45,11 @@ with tarfile.open(sys.argv[1],'r:gz') as t:
     if not entries: raise SystemExit('empty canary bundle')
     for m in entries:
         p=m.name.rstrip('/').split('/')
+        # Git archives include a legitimate top-level "gotham/" directory.
+        # Admit that exact directory and ordinary descendants; reject absolute
+        # paths, traversal, empty components, links and special file types.
+        if m.name == 'gotham/' and m.isdir():
+            continue
         if not m.name.startswith('gotham/') or '..' in p or '.' in p or '' in p or not (m.isdir() or m.isfile()):
             raise SystemExit('unsafe canary bundle')
     need={'gotham/core/specter_service.py','gotham/core/specter_transport.py','gotham/core/audit.py'}
