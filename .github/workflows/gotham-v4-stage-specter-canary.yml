@@ -38,7 +38,12 @@ jobs:
             sleep 8
           done
           test "$(id -u)" -ne 0
-          if bash deploy/install_specter_canary_admin.sh 2>&1 | grep -q 'BLOCKED: run as root'; then
+          set +e
+          REJECTION="$(bash deploy/install_specter_canary_admin.sh 2>&1)"
+          REJECTION_STATUS=$?
+          set -e
+          test "$REJECTION_STATUS" -eq 2 || { echo 'BLOCKED: unexpected admin script exit'; exit 1; }
+          if grep -q 'BLOCKED: run as root' <<< "$REJECTION"; then
             echo 'PASS: administrator script denies CI-runner execution'
           else
             echo 'BLOCKED: admin installer privilege gate missing'; exit 1
