@@ -1,7 +1,7 @@
 name: Gotham quality gates
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, 'claude/**', 'feature/specter-write-only-sidecar']
   pull_request:
   workflow_dispatch:
 permissions:
