@@ -1,0 +1,90 @@
+name: Gotham 4 stage Specter canary package (upload-only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/gotham-v4-stage-specter-canary.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 293e4a76efc274a9a8c3043f1dc3a4d2e0e167af
+          persist-credentials: false
+      - name: Check exact reviewed source and both CI quality gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE=293e4a76efc274a9a8c3043f1dc3a4d2e0e167af
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          bash -n deploy/install_specter_canary_admin.sh
+          python3 -m compileall -q gotham/core
+          for attempt in $(seq 1 40); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SOURCE&per_page=100" > /tmp/specter-runs.json
+            if python3 - <<'PY'
+          import json
+          rows=json.load(open('/tmp/specter-runs.json')).get('workflow_runs',[])
+          passed={x['name'] for x in rows if x.get('conclusion')=='success'}
+          needed={'gotham-unit-and-docker-tests','Gotham quality gates'}
+          raise SystemExit(0 if needed <= passed else 1)
+          PY
+            then break; fi
+            if [ "$attempt" -eq 40 ]; then echo 'BLOCKED: Specter CI not green'; exit 1; fi
+            sleep 8
+          done
+          test "$(id -u)" -ne 0
+          if bash deploy/install_specter_canary_admin.sh 2>&1 | grep -q 'BLOCKED: run as root'; then
+            echo 'PASS: administrator script denies CI-runner execution'
+          else
+            echo 'BLOCKED: admin installer privilege gate missing'; exit 1
+          fi
+      - name: Configure pinned staging SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.GOTHAM_STAGING_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEPLOY_KEY"
+          install -d -m 700 ~/.ssh
+          python3 - <<'PY'
+          import os,pathlib,base64
+          raw=os.environ['DEPLOY_KEY'].strip().lstrip(chr(0xfeff))
+          if raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----') and '\\n' in raw and '\n' not in raw:
+              raw=raw.replace('\\n','\n')
+          if not raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+              try:
+                  candidate=base64.b64decode(''.join(raw.split()),validate=True).decode()
+                  if candidate.startswith('-----BEGIN OPENSSH PRIVATE KEY-----'):
+                      raw=candidate
+              except (ValueError,UnicodeError):
+                  pass
+          raw=raw.replace(chr(13),'').strip()+'\n'
+          if not (raw.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n') and raw.endswith('\n-----END OPENSSH PRIVATE KEY-----\n')):
+              raise SystemExit('invalid private key')
+          pathlib.Path.home().joinpath('.ssh/gotham').write_text(raw)
+          PY
+          chmod 600 ~/.ssh/gotham
+          ssh-keygen -y -P '' -f ~/.ssh/gotham >/dev/null 2>&1
+          ssh-keyscan -T 10 -t ed25519 155.138.194.208 2>/dev/null > ~/.ssh/known_hosts
+          test "$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1{print $2}')" = 'SHA256:iCF1uAtKDW1secn8suRBp1y496blYQum9p/EXfXT024'
+      - name: Upload exact canary source and installer; do not run root commands
+        run: |
+          set -euo pipefail
+          SHA=293e4a76efc274a9a8c3043f1dc3a4d2e0e167af
+          FILE="specter-canary-$SHA.tar.gz"
+          git archive --format=tar.gz -o "$FILE" HEAD gotham/
+          DIGEST="$(sha256sum "$FILE" | awk '{print $1}')"
+          CMD=(-i ~/.ssh/gotham -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12)
+          ssh "${CMD[@]}" gothamdeploy@155.138.194.208 'install -d -m 700 "$HOME/gotham-v4-admin"'
+          scp "${CMD[@]}" "$FILE" deploy/install_specter_canary_admin.sh gothamdeploy@155.138.194.208:gotham-v4-admin/
+          ssh "${CMD[@]}" gothamdeploy@155.138.194.208 "test \$(sha256sum \$HOME/gotham-v4-admin/$FILE | awk '{print \$1}') = '$DIGEST'; chmod 600 \$HOME/gotham-v4-admin/$FILE \$HOME/gotham-v4-admin/install_specter_canary_admin.sh"
+          echo "PASS: pinned Specter canary archive staged, no service started"
+          echo "SOURCE_COMMIT=$SHA"
+          echo "CANARY_ARCHIVE_SHA256=$DIGEST"
+          echo "CANARY_ARCHIVE_SHA256=$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "PRODUCTION_MODIFIED=false" >> "$GITHUB_STEP_SUMMARY"
