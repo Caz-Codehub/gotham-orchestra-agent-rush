@@ -52,7 +52,12 @@ jobs:
           assert 'PASS: source archive verified' in p.stdout
           print('PASS: previously rejected Git archive accepted by exact fixed validator')
           PY
-          if bash deploy/install_specter_canary_admin.sh 2>&1 | grep -q '^BLOCKED: run as root'; then
+          set +e
+          NONROOT_RESULT="$(bash deploy/install_specter_canary_admin.sh 2>&1)"
+          NONROOT_STATUS=$?
+          set -e
+          test "$NONROOT_STATUS" -eq 2 || { echo 'BLOCKED: unexpected installer status'; exit 1; }
+          if grep -q '^BLOCKED: run as root' <<< "$NONROOT_RESULT"; then
             echo 'PASS: root-only gate remains active'
           else
             echo 'BLOCKED: root-only gate failed'; exit 1
